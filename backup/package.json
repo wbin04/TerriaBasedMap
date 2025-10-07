@@ -1,0 +1,32 @@
+{
+  "name": "models-api-server",
+  "version": "1.0.0",
+  "description": "Node.js API server for models data with PostgreSQL",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "api",
+    "postgresql",
+    "express",
+    "models",
+    "geospatial"
+  ],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

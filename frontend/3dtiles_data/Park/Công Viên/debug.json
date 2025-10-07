@@ -1,0 +1,50 @@
+{
+  "fileName": "Công Viên",
+  "totalFeatures": 4,
+  "geometryTypes": {
+    "Polygon": 4
+  },
+  "propertyKeys": {
+    "ten_cong_vien": {
+      "count": 4,
+      "frequency": 1,
+      "types": [
+        "string"
+      ],
+      "samples": [
+        "Công viên 2",
+        "Công viên 29/3",
+        "Công viên phần mềm số 2"
+      ]
+    }
+  },
+  "bounds": [
+    108.20118571229432,
+    16.023807508505413,
+    108.22491559875613,
+    16.09316280930571
+  ],
+  "sampleFeatures": [
+    {
+      "index": 0,
+      "geometryType": "Polygon",
+      "properties": {
+        "ten_cong_vien": "Công viên 2"
+      }
+    },
+    {
+      "index": 1,
+      "geometryType": "Polygon",
+      "properties": {
+        "ten_cong_vien": "Công viên 29/3"
+      }
+    },
+    {
+      "index": 2,
+      "geometryType": "Polygon",
+      "properties": {
+        "ten_cong_vien": "Công viên phần mềm số 2"
+      }
+    }
+  ]
+}

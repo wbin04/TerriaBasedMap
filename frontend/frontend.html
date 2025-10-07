@@ -1,0 +1,1077 @@
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cesium Map Viewer</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="http://localhost:8000/backend.js" defer></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #cesiumContainer {
+            width: 100%;
+            height: 100vh;
+        }
+
+        .sidebar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 350px;
+            height: 100vh;
+            background: #fff;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar.active {
+            transform: translateX(0);
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            background: #2c3e50;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sidebar-tabs {
+            display: flex;
+            background: #ecf0f1;
+            border-bottom: 2px solid #bdc3c7;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 15px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #7f8c8d;
+            transition: all 0.3s;
+        }
+
+        .tab-btn.active {
+            background: white;
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+        }
+
+        .tab-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
+        .upload-area {
+            border: 2px dashed #bdc3c7;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+        }
+
+        .upload-area:hover {
+            border-color: #3498db;
+            background: #ecf0f1;
+        }
+
+        .upload-area input {
+            display: none;
+        }
+
+        .dataset-list {
+            margin-top: 20px;
+        }
+
+        .dataset-item {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            cursor: move;
+            transition: all 0.2s;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .dataset-item:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            border-color: #3498db;
+        }
+
+        .dataset-item.dragging {
+            opacity: 0.4;
+            transform: scale(0.98);
+        }
+
+        .dataset-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dataset-reorder-controls {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .reorder-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            line-height: 1;
+            transition: all 0.2s;
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            min-width: 32px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .reorder-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15);
+        }
+
+        .reorder-btn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        .reorder-btn:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+            opacity: 0.4;
+            box-shadow: none;
+        }
+
+        .dataset-name {
+            font-weight: 600;
+            font-size: 14px;
+            color: #2c3e50;
+            flex: 1;
+            cursor: move;
+            user-select: none;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .dataset-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .dataset-name-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 40px;
+            height: 20px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 20px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked+.toggle-slider {
+            background-color: #3498db;
+        }
+
+        .toggle-switch input:checked+.toggle-slider:before {
+            transform: translateX(20px);
+        }
+
+        .delete-btn {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: background 0.2s;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .delete-btn:hover {
+            background: #c0392b;
+        }
+
+        .opacity-control {
+            margin-top: 10px;
+        }
+
+        .opacity-control label {
+            font-size: 12px;
+            color: #7f8c8d;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .opacity-control input[type="range"] {
+            width: 100%;
+        }
+
+        .layer-list {
+            margin-top: 10px;
+            padding-left: 10px;
+            border-left: 3px solid #3498db;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .layer-list:not(.collapsed) {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .layer-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 0;
+            cursor: pointer;
+            font-size: 12px;
+            color: #3498db;
+            font-weight: 500;
+            user-select: none;
+            transition: color 0.2s;
+        }
+
+        .layer-toggle:hover {
+            color: #2980b9;
+        }
+
+        .layer-toggle-icon {
+            font-size: 10px;
+            transition: transform 0.2s;
+        }
+
+        .layer-toggle-text {
+            flex: 1;
+        }
+
+        .layer-item {
+            padding: 8px;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .layer-item input[type="color"] {
+            border: 1px solid #dee2e6;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .layer-item input[type="color"]:hover {
+            border-color: #3498db;
+        }
+
+        .layer-item input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        .toggle-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            z-index: 999;
+            transition: all 0.3s;
+        }
+
+        .toggle-btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .feature-info {
+            position: absolute;
+            top: 80px;
+            right: 20px;
+            width: 380px;
+            max-height: calc(100vh - 120px);
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
+            display: none;
+            overflow: hidden;
+        }
+
+        .feature-info.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .feature-info-header {
+            padding: 15px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .feature-info-header h3 {
+            font-size: 15px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .feature-info-content {
+            padding: 0;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .feature-type-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-left: 10px;
+        }
+
+        .feature-property {
+            display: grid;
+            grid-template-columns: 140px 1fr;
+            gap: 15px;
+            padding: 15px 20px;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+
+        .feature-property:hover {
+            background: #f8f9fa;
+        }
+
+        .feature-property:last-child {
+            border-bottom: none;
+        }
+
+        .property-key {
+            font-weight: 600;
+            color: #495057;
+            font-size: 13px;
+            word-break: break-word;
+        }
+
+        .property-value {
+            color: #212529;
+            font-size: 13px;
+            word-break: break-word;
+            line-height: 1.5;
+        }
+
+        .feature-geometry-info {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .geometry-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 16px;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .file-types {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 10px;
+        }
+
+        .explore-search {
+            margin-bottom: 20px;
+        }
+
+        .explore-search input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .explore-categories {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .category-item {
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .category-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+
+        .category-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: #2c3e50;
+        }
+
+        .category-description {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+
+        .compare-controls {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .compare-btn {
+            background: #95a5a6;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.2s;
+            min-width: 26px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .compare-btn:hover {
+            background: #7f8c8d;
+            transform: translateY(-1px);
+        }
+
+        .compare-btn.active {
+            background: #3498db;
+            box-shadow: 0 2px 4px rgba(52, 152, 219, 0.4);
+        }
+
+        #compareSlider {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 4px;
+            height: 100vh;
+            background: rgba(52, 152, 219, 0.8);
+            cursor: ew-resize;
+            z-index: 998;
+            display: none;
+        }
+
+        #compareHandle {
+            position: absolute;
+            top: 50%;
+            left: -16px;
+            width: 36px;
+            height: 60px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            cursor: ew-resize;
+            transform: translateY(-50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 18px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            transition: all 0.2s;
+        }
+
+        #compareHandle:hover {
+            transform: translateY(-50%) scale(1.1);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        #compareModeBtn {
+            position: absolute;
+            top: 20px;
+            left: 400px;
+            background: #95a5a6;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 700;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+            z-index: 999;
+            transition: background-color 0.18s, transform 0.12s;
+            line-height: 1;
+            width: 44px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #compareModeBtn:hover { transform: translateY(-1px); }
+
+        #compareModeBtn.active { background: #3498db; }
+    </style>
+</head>
+
+<body>
+    <div id="cesiumContainer"></div>
+
+    <button class="toggle-btn" onclick="toggleSidebar()">☰ Data Catalog</button>
+    <button id="compareModeBtn" onclick="toggleCompareSafe()" title="Toggle compare mode">&lt;&gt;</button>
+
+    <div id="compareSlider">
+        <div id="compareHandle"><></div>
+    </div>
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2>Data Catalog</h2>
+            <button class="close-btn" onclick="toggleSidebar()">×</button>
+        </div>
+
+        <div class="sidebar-tabs">
+            <button class="tab-btn active" onclick="switchTab('explore')">Explore Data</button>
+            <button class="tab-btn" onclick="switchTab('upload')">Add Local Data</button>
+        </div>
+
+        <div class="tab-content">
+            <div class="tab-panel active" id="explore-panel">
+                <div class="explore-search">
+                    <input type="text" placeholder="Search datasets..." id="searchInput">
+                </div>
+                <div class="explore-categories">
+                    <!-- Replaced default categories with administrative viewer entry -->
+                    <div class="category-item" id="adminCategory"
+                        style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div class="category-title">🏛️ Xem đơn vị hành chính</div>
+                            <div class="category-description">Tải và hiển thị tỉnh thành/xã phường</div>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <button id="adminLoadBtn" style="padding:6px 10px; font-size:12px;"
+                                onclick="loadAdminData()">Xem</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-panel" id="upload-panel">
+                <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+                    <div style="font-size: 48px; color: #3498db; margin-bottom: 10px;">📁</div>
+                    <div style="font-weight: 600; margin-bottom: 5px;">Drop files here or click to browse</div>
+                    <div class="file-types">Supported: GeoJSON, KML, KMZ, CZML, GPX, GLB, GLTF</div>
+                    <input type="file" id="fileInput" accept=".geojson,.json,.kml,.kmz,.czml,.gpx,.glb,.gltf" multiple>
+                </div>
+
+                <div class="dataset-list" id="datasetList"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="feature-info" id="featureInfo">
+        <div class="feature-info-header">
+            <div>
+                <h3 id="featureTitle">Feature Information</h3>
+            </div>
+            <button class="close-btn" onclick="closeFeatureInfo()">×</button>
+        </div>
+        <div class="feature-info-content" id="featureInfoContent"></div>
+    </div>
+
+    <!-- Admin viewer integration: drawing and polygon-based admin data loading -->
+    <script>
+        // These elements will be created dynamically when admin viewer is activated
+        let isDrawingPolygon = false;
+        let drawHandler = null;
+        let drawnPolygons = [];
+
+        function activateAdminViewer() {
+            // Open sidebar if closed
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar.classList.contains('active')) sidebar.classList.add('active');
+
+            // Switch to Explore tab
+            switchTab('explore');
+
+            // Highlight category visually
+            document.querySelectorAll('.category-item').forEach(el => el.classList.remove('active'));
+            const admin = document.getElementById('adminCategory');
+            if (admin) admin.classList.add('active');
+
+            // Switch to admin mode and load models
+            if (window.switchToAdminMode) {
+                window.switchToAdminMode();
+            } else {
+                console.log('switchToAdminMode not available, backend.js may not be loaded');
+            }
+        }
+
+        function loadAdminData() {
+            // Check if DVHC dataset already exists
+            const existingDataset = window.datasets
+                ? window.datasets.find((d) => d.id === "DVHC")
+                : null;
+
+            if (existingDataset) {
+                console.log("DVHC dataset already exists");
+                return;
+            }
+
+            // Create a new dataset for admin data
+            const datasetId = "DVHC";
+            const datasetName = "Đơn vị hành chính";
+
+            // Create dataset object
+            const dataset = {
+                id: datasetId,
+                source: "ui",
+                name: datasetName,
+                type: "DVHC",
+                visible: true,
+                opacity: 0.7,
+                layers: [
+                    { name: "Tỉnh thành", visible: true, color: "#3498db" },
+                    { name: "Xã phường", visible: true, color: "#e74c3c" },
+                ],
+            };
+
+            // Add to datasets array
+            if (!window.datasets) window.datasets = [];
+            window.datasets.push(dataset);
+
+            // Trigger re-render if renderDatasetList is available
+            if (window.renderDatasetList) {
+                window.renderDatasetList();
+            }
+
+            // Switch to upload tab to show the dataset
+            switchTab("upload");
+
+            // Open sidebar if closed
+            const sidebar = document.getElementById("sidebar");
+            if (!sidebar.classList.contains("active")) {
+                sidebar.classList.add("active");
+            }
+
+            // Switch to admin mode
+            if (window.switchToAdminMode) {
+                window.switchToAdminMode();
+            } else {
+                console.log("switchToAdminMode not available, backend.js may not be loaded");
+            }
+        }
+
+        function createDatasetElement(dataset) {
+            const datasetList = document.getElementById('datasetList');
+            if (!datasetList) return;
+
+            const datasetDiv = document.createElement('div');
+            datasetDiv.className = 'dataset-item';
+            datasetDiv.dataset.datasetId = dataset.id;
+            datasetDiv.dataset.datasetSource = dataset.source || 'ui';
+
+            const source = dataset.source || 'ui';
+            
+            datasetDiv.innerHTML = `
+                <div class="dataset-header">
+                    <div class="dataset-name">${dataset.name}</div>
+                    <div class="dataset-controls">
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${dataset.visible ? 'checked' : ''} onchange="toggleDataset('${dataset.id}', '${source}', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <button class="delete-btn" onclick="deleteDataset('${dataset.id}', '${source}')">×</button>
+                    </div>
+                </div>
+                <div class="opacity-control">
+                    <label>Opacity: <span id="opacity-value-${dataset.id}">${Math.round(dataset.opacity * 100)}%</span></label>
+                    <input type="range" min="0" max="100" step="1" value="${Math.round(dataset.opacity * 100)}" oninput="updateOpacitySafe('${dataset.id}', '${source}', this.value)">
+                </div>
+                <div class="layer-list">
+                    ${dataset.layers ? dataset.layers.map((layer, idx) => `
+                        <div class="layer-item">
+                            <input type="checkbox" ${layer.visible ? 'checked' : ''} onchange="toggleLayer('${dataset.id}', '${source}', ${idx}, this.checked)">
+                            <input type="color" value="${layer.color || '#3498db'}" onchange="changeLayerColor('${dataset.id}', '${source}', ${idx}, this.value)" style="width: 30px; height: 20px; border: none; cursor: pointer; margin-right: 8px;">
+                            <span>${layer.name}</span>
+                        </div>
+                    `).join('') : ''}
+                </div>
+            `;
+
+            datasetList.appendChild(datasetDiv);
+        }
+
+        // Helper functions for dataset management
+        // Note: These are fallback helpers - backend.js has the main implementation
+        function toggleDataset(datasetId, source, checked) {
+            // Call backend.js implementation if available
+            if (window.toggleDataset) {
+                window.toggleDataset(datasetId, source, checked);
+            }
+        }
+
+        function deleteDataset(datasetId, source) {
+            // Call backend.js implementation if available
+            if (window.deleteDataset) {
+                window.deleteDataset(datasetId, source);
+            }
+        }
+
+        function changeOpacity(datasetId, source, opacity) {
+            // Call backend.js implementation if available (updateOpacity)
+            if (window.updateOpacity) {
+                const opacityValue = Math.round(parseFloat(opacity) * 100);
+                window.updateOpacity(datasetId, source, opacityValue);
+            }
+        }
+
+        function toggleLayer(datasetId, source, layerIdx, visible) {
+            // Call backend.js implementation if available
+            if (window.toggleLayer) {
+                window.toggleLayer(datasetId, source, layerIdx);
+            }
+        }
+
+        // Helper: compute viewport info similar to backup app
+        function getViewportInfo() {
+            try {
+                if (!window.viewer) return null;
+                const rect = viewer.camera.computeViewRectangle();
+                if (!rect) return null;
+                const west = Cesium.Math.toDegrees(rect.west);
+                const south = Cesium.Math.toDegrees(rect.south);
+                const east = Cesium.Math.toDegrees(rect.east);
+                const north = Cesium.Math.toDegrees(rect.north);
+                const cameraPosition = viewer.camera.positionCartographic;
+                const cameraHeight = cameraPosition ? cameraPosition.height : 100000;
+                let lod = 'province';
+                if (cameraHeight < 200000) lod = 'ward';
+                return { bbox: `${west},${south},${east},${north}`, lod, cameraHeight };
+            } catch (e) { return null; }
+        }
+
+        // Drawing polygon (uses Cesium ScreenSpaceEventHandler)
+        function startDrawingPolygon() {
+            if (isDrawingPolygon) return;
+            if (!window.viewer) { alert('Viewer chưa sẵn sàng'); return; }
+            isDrawingPolygon = true;
+            const status = document.getElementById('adminStatus');
+            status.textContent = 'Đang vẽ polygon... Nhấp chuột trái để thêm điểm, nhấp chuột phải để kết thúc.';
+
+            if (drawHandler) { drawHandler.destroy(); drawHandler = null; }
+            drawHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+            let activePoints = [];
+            let activePolygon = null;
+
+            drawHandler.setInputAction((click) => {
+                const pos = viewer.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
+                if (!pos) return;
+                activePoints.push(pos);
+                if (activePoints.length === 1) {
+                    activePolygon = viewer.entities.add({
+                        polygon: {
+                            hierarchy: new Cesium.CallbackProperty(() => new Cesium.PolygonHierarchy(activePoints), false),
+                            material: Cesium.Color.YELLOW.withAlpha(0.3),
+                            outline: true,
+                            outlineColor: Cesium.Color.YELLOW
+                        }
+                    });
+                }
+            }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+            drawHandler.setInputAction(() => finishDrawing(true), Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+            drawHandler.setInputAction(() => finishDrawing(true), Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+
+            function finishDrawing(commit) {
+                if (!commit) return;
+                if (activePoints.length < 3) { alert('Polygon cần ít nhất 3 điểm'); return; }
+                drawnPolygons.push({ entity: activePolygon, points: activePoints.slice() });
+                if (drawHandler) { drawHandler.destroy(); drawHandler = null; }
+                isDrawingPolygon = false;
+                const status = document.getElementById('adminStatus');
+                status.textContent = `Đã vẽ polygon với ${activePoints.length} điểm`;
+            }
+        }
+
+        function clearAllPolygons() {
+            if (!window.viewer) return;
+            drawnPolygons.forEach(p => { if (p.entity) viewer.entities.remove(p.entity); });
+            drawnPolygons = [];
+            if (drawHandler) { drawHandler.destroy(); drawHandler = null; }
+            isDrawingPolygon = false;
+            const status = document.getElementById('adminStatus');
+            status.textContent = 'Chưa có polygon nào';
+        }
+
+        // Load data by polygon and call backup app endpoint /models-by-polygon
+        async function loadDataByPolygonWithLOD(category, buttonElement = null, categoryName = null) {
+            if (drawnPolygons.length === 0) { alert('Vui lòng vẽ polygon trước'); return; }
+            const polygon = drawnPolygons[drawnPolygons.length - 1];
+            const coordinates = polygon.points.map(pt => {
+                const carto = Cesium.Cartographic.fromCartesian(pt);
+                return [Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude)];
+            });
+            coordinates.push(coordinates[0]);
+            const polygonGeoJSON = { type: 'Polygon', coordinates: [coordinates] };
+            const viewportInfo = getViewportInfo();
+            const cameraHeight = viewportInfo?.cameraHeight || 100000;
+
+            if (buttonElement) { buttonElement.disabled = true; const orig = buttonElement.textContent; buttonElement.textContent = 'Đang tải...'; }
+
+            try {
+                const resp = await fetch('http://localhost:8000/models-by-polygon', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ polygon: polygonGeoJSON, category: category, cameraHeight })
+                });
+                if (!resp.ok) {
+                    const t = await resp.text(); throw new Error(`${resp.status} ${t}`);
+                }
+                const data = await resp.json();
+                // clear existing entities (but keep drawn polygons)
+                viewer.entities.removeAll();
+                // re-add polygons
+                drawnPolygons.forEach(dp => {
+                    dp.entity = viewer.entities.add({ polygon: { hierarchy: new Cesium.PolygonHierarchy(dp.points), material: Cesium.Color.YELLOW.withAlpha(0.3), outline: true, outlineColor: Cesium.Color.YELLOW } });
+                });
+                const models = data.models || [];
+                models.forEach((model, idx) => {
+                    // if simplified_geom available, draw polygons
+                    if (model.simplified_geom && (model.simplified_geom.type === 'Polygon' || model.simplified_geom.type === 'MultiPolygon')) {
+                        if (model.simplified_geom.type === 'Polygon') {
+                            const coords = model.simplified_geom.coordinates[0] || [];
+                            if (coords.length) viewer.entities.add({ name: model.name || '', polygon: { hierarchy: Cesium.Cartesian3.fromDegreesArray(coords.flat()), material: Cesium.Color.fromRandom({ alpha: 0.4 }), outline: true } });
+                        } else if (model.simplified_geom.type === 'MultiPolygon') {
+                            model.simplified_geom.coordinates.forEach(poly => { const coords = poly[0] || []; if (coords.length) viewer.entities.add({ polygon: { hierarchy: Cesium.Cartesian3.fromDegreesArray(coords.flat()), material: Cesium.Color.fromRandom({ alpha: 0.4 }), outline: true } }); });
+                        }
+                    } else if (model.longitude && model.latitude) {
+                        viewer.entities.add({ id: `m-${model.id || idx}`, position: Cesium.Cartesian3.fromDegrees(model.longitude, model.latitude), point: { pixelSize: 8, color: Cesium.Color.BLUE }, label: { text: model.name || String(model.id || ''), font: '12px sans-serif', verticalOrigin: Cesium.VerticalOrigin.BOTTOM, pixelOffset: new Cesium.Cartesian2(0, -10) } });
+                    }
+                });
+
+                // Update status
+                const status = document.getElementById('adminStatus');
+                status.textContent = `Tìm thấy ${models.length} đối tượng cho ${categoryName || category}`;
+            } catch (err) {
+                console.error('Load polygon error', err);
+                alert('Lỗi tải dữ liệu: ' + err.message);
+            } finally {
+                if (buttonElement) { buttonElement.disabled = false; buttonElement.textContent = buttonElement.getAttribute('data-original-text') || buttonElement.textContent.replace('Đang tải...', ''); }
+            }
+        }
+    </script>
+
+    <script>
+        // Minimal safeCall shim: call a function exported by backend.js if available,
+        // otherwise return false and avoid throwing ReferenceError. This prevents inline
+        // onclick handlers from breaking when backend.js hasn't loaded yet.
+        function safeCall(funcName, ...args) {
+            try {
+                if (window[funcName] && typeof window[funcName] === 'function') {
+                    return window[funcName](...args);
+                }
+            } catch (e) {
+                // swallow errors - backend will log if needed
+            }
+            return false;
+        }
+
+        // Override onclick handlers to use safe calls
+        function toggleLayerListSafe(datasetId) {
+            return safeCall('toggleLayerList', datasetId);
+        }
+
+        function toggleDatasetSafe(id, source, checked) {
+            return safeCall('toggleDataset', id, source, checked);
+        }
+
+        function deleteDatasetSafe(id, source) {
+            return safeCall('deleteDataset', id, source);
+        }
+
+        function updateOpacitySafe(id, source, value) {
+            return safeCall('updateOpacity', id, source, value);
+        }
+
+        function toggleLayerSafe(datasetId, source, layerIdx) {
+            return safeCall('toggleLayer', datasetId, source, layerIdx);
+        }
+
+        function changeLayerColorSafe(datasetId, source, layerIdx, color) {
+            return safeCall('changeLayerColor', datasetId, source, layerIdx, color);
+        }
+
+        function moveDatasetUpSafe(index) {
+            return safeCall('moveDatasetUp', index);
+        }
+
+        function moveDatasetDownSafe(index) {
+            return safeCall('moveDatasetDown', index);
+        }
+
+        function toggleCompareSafe() {
+            return safeCall('toggleCompareMode');
+        }
+
+        function setDatasetSideSafe(datasetId, side) {
+            return safeCall('setDatasetSide', datasetId, side);
+        }
+    </script>
+</body>
+
+</html>

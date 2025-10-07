@@ -1,0 +1,1352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cesium 3D Model Viewer</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.117/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.117/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <style>
+    html, body, #cesiumContainer {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <!-- Mode Selector for view or load data -->
+  <div id="modeControl" style="position:absolute; top:10px; right:10px; background:rgba(255,255,255,0.8); padding:8px; border-radius:4px; z-index:1000;">
+    <select id="modeSelector">
+      <option value="viewAdmin" selected>Xem đơn vị hành chính</option>
+      <option value="viewPark">Xem công viên</option>
+      <option value="loadData">Tải dữ liệu</option>
+    </select>
+  </div>
+  <!-- GeoJSON Upload Section -->
+  <div id="geojsonUploadSection" style="display:none; position:absolute; top:10px; left:10px; background:rgba(255,255,255,0.8); padding:8px; border-radius:4px; z-index:1000;">
+    <input type="file" id="geojsonInput" accept=".geojson,application/json" multiple>
+    <button id="loadGeojsonBtn" disabled>Tải GeoJSON</button>
+    <button id="saveDataBtn" disabled>Lưu dữ liệu</button>
+    <button id="saveGeojsonBtn" disabled>Chuyển đổi 3D Tiles</button>
+    <button id="saveModelBtn" disabled>Lưu model</button>
+    <hr style="margin: 8px 0;">
+    <button id="drawPolygonBtn">Vẽ Polygon</button>
+    <button id="clearPolygonBtn" disabled>Xóa Polygon</button>
+    <hr style="margin: 8px 0;">
+    <button id="loadProvinceBtn" disabled>Tải tỉnh thành</button>
+    <button id="loadWardBtn" disabled>Tải xã phường</button>
+    <button id="loadParkBtn" disabled>Tải công viên</button>
+    <hr style="margin: 8px 0;">
+    <button id="debugDataBtn">Debug Data</button>
+  </div>
+  <script>
+    // Nếu bạn dùng Cesium Ion, có thể cần access token (hoặc bỏ dòng này nếu không dùng dịch vụ Ion)
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmU1Zjc0Ny1kMTZhLTRhYmMtOGFjYi1hOWU1MjlhYmEzNmQiLCJpZCI6MzE5NTA2LCJpYXQiOjE3NTMyNDMwODB9.k4KeeDH7fAto4Orfeva9-sJuvQTLoSELhItVYsochBs';
+
+    const viewer = new Cesium.Viewer("cesiumContainer", {
+      shouldAnimate: true,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      animation: false,
+      timeline: false
+    });
+    
+    // Set camera to Vietnam immediately
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(106.0, 16.0, 2000000)
+    });
+    
+    // Add simple imagery provider
+    viewer.imageryLayers.removeAll();
+    viewer.imageryLayers.addImageryProvider(
+      new Cesium.OpenStreetMapImageryProvider({
+        url: 'https://a.tile.openstreetmap.org/'
+      })
+    );
+
+    // Function để tính toán viewport, zoom level và LOD
+function getViewportInfo() {
+    const rect = viewer.camera.computeViewRectangle();
+    if (!rect) return null;
+    
+    const west = Cesium.Math.toDegrees(rect.west);
+    const south = Cesium.Math.toDegrees(rect.south);
+    const east = Cesium.Math.toDegrees(rect.east);
+    const north = Cesium.Math.toDegrees(rect.north);
+    
+    // FIXED: Use consistent camera height calculation
+    const cameraPosition = viewer.camera.positionCartographic;
+    const cameraHeight = cameraPosition ? cameraPosition.height : 100000;
+    
+    // Tính zoom level dựa trên kích thước viewport
+    const viewportWidth = Math.abs(east - west);
+    const viewportHeight = Math.abs(north - south);
+    const zoomLevel = Math.max(1, Math.floor(360 / Math.max(viewportWidth, viewportHeight)));
+    
+    // XÁC ĐỊNH LOD theo độ cao camera - CONSISTENT với backend
+    let lod = "province";
+    if (cameraHeight < 200000) {
+        lod = "ward";
+    }
+    
+    return {
+        bbox: `${west},${south},${east},${north}`,
+        zoom: Math.min(zoomLevel, 100),
+        lod,
+        cameraHeight: cameraHeight // Always return actual height
+    };
+}
+
+    // Function để load models với viewport-aware và LOD
+    async function loadModelsForViewport() {
+      const viewportInfo = getViewportInfo();
+      if (!viewportInfo) return;
+      const { bbox, zoom, lod, cameraHeight } = viewportInfo;
+      let url = `http://localhost:5000/models?bbox=${bbox}&zoom=${zoom}&lod=${lod}`;
+      if (filterCategory) url += `&category=${filterCategory}`;
+      try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        const models = data.models || [];
+        console.log(`Loaded ${models.length} models at camera height ${cameraHeight.toFixed(2)}`);
+        viewer.entities.removeAll();
+        models.forEach((model, index) => processModel(model, index));
+      } catch (err) {
+        console.error('Error loading models:', err);
+      }
+    }
+
+    // Function xử lý từng model
+    function processModel(model, index) {
+      const lon = model.longitude || model.position?.longitude;
+      const lat = model.latitude  || model.position?.latitude;
+      if (!lon || !lat) return;
+
+      // Use cameraHeight for LOD switch instead of zoom
+      const viewportInfo   = getViewportInfo();
+      const cameraHeight   = viewportInfo?.cameraHeight || 0;
+      const thresholdHeight= 30000; // height (m) threshold for polygon vs point
+
+      if (currentMode === 'viewPark') {
+        if (cameraHeight < thresholdHeight) {
+          // Close view: draw full polygon
+          if (model.simplified_geom && model.simplified_geom.coordinates) {
+            drawGeometryDirectly(model.simplified_geom, model.area || 0, index);
+          }
+        } else {
+          // Far view: draw point + label
+          viewer.entities.add({
+            id: `park-${model.id || index}`,
+            position: Cesium.Cartesian3.fromDegrees(lon, lat),
+            point: { pixelSize: 10, color: Cesium.Color.GREEN },
+            label: {
+              text: String(model.name || model.id || ''),
+              font: '14px sans-serif',
+              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+              pixelOffset: new Cesium.Cartesian2(0, -12)
+            }
+          });
+        }
+        return;
+      }
+      // Default (viewAdmin): always draw polygons
+      if (model.simplified_geom && model.simplified_geom.coordinates) {
+        drawGeometryDirectly(model.simplified_geom, model.area || 0, index);
+      }
+    }
+
+    // Function vẽ geometry trực tiếp từ PostGIS
+    function drawGeometryDirectly(geometry, area, index) {
+      const colors = [
+        Cesium.Color.CRIMSON, Cesium.Color.ORANGE, Cesium.Color.GOLD,
+        Cesium.Color.FORESTGREEN, Cesium.Color.DODGERBLUE, Cesium.Color.MEDIUMORCHID,
+        Cesium.Color.HOTPINK, Cesium.Color.TEAL, Cesium.Color.BROWN,
+        Cesium.Color.DARKSLATEGRAY, Cesium.Color.CORAL, Cesium.Color.LIGHTSEAGREEN,
+        Cesium.Color.MEDIUMPURPLE, Cesium.Color.SANDYBROWN, Cesium.Color.STEELBLUE,
+        Cesium.Color.INDIANRED, Cesium.Color.DARKKHAKI, Cesium.Color.MEDIUMSLATEBLUE,
+        Cesium.Color.DARKGREEN, Cesium.Color.CHOCOLATE, Cesium.Color.CADETBLUE,
+        Cesium.Color.DARKORANGE, Cesium.Color.MEDIUMVIOLETRED, Cesium.Color.OLIVEDRAB,
+        Cesium.Color.ROYALBLUE, Cesium.Color.SIENNA, Cesium.Color.DARKTURQUOISE,
+        Cesium.Color.FIREBRICK, Cesium.Color.MEDIUMSEAGREEN, Cesium.Color.DARKORCHID,
+        Cesium.Color.GOLDENROD, Cesium.Color.DARKRED, Cesium.Color.DARKBLUE,
+        Cesium.Color.DARKMAGENTA
+      ];
+      const color = colors[index % colors.length];
+
+      function drawPolygon(coords, name) {
+        if (!coords || coords.length < 3) return;
+        viewer.entities.add({
+          name,
+          polygon: {
+            hierarchy: Cesium.Cartesian3.fromDegreesArray(coords.flat()),
+            height: 0,
+            material: color.withAlpha(0.3),
+            outline: true,
+            outlineColor: color
+          }
+        });
+      }
+
+      if (geometry.type === 'Polygon') {
+        if (Array.isArray(geometry.coordinates)) {
+          drawPolygon(geometry.coordinates[0], `Polygon (area: ${area.toFixed(4)})`);
+        }
+      } else if (geometry.type === 'MultiPolygon') {
+        geometry.coordinates.forEach((poly, idx) => {
+          if (Array.isArray(poly)) {
+            drawPolygon(poly[0], `MultiPolygon part ${idx+1} (area: ${area.toFixed(4)})`);
+          }
+        });
+      }
+    }
+
+    // Function load từ tileset (fallback)
+    function loadFromTileset(model, index) {
+      const lon = model.longitude || model.position?.longitude;
+      const lat = model.latitude || model.position?.latitude;
+      const height = 0;
+
+      if (!lon || !lat) {
+        console.warn("Missing longitude or latitude:", model);
+        return;
+      }
+
+      const position = Cesium.Cartesian3.fromDegrees(lon, lat, height);
+
+      // ...loại bỏ marker điểm đỏ xác minh vị trí...
+
+      // Log model.url for debugging
+      console.log("Tileset URL:", model.url);
+      if (!model.url || typeof model.url !== 'string') {
+        console.warn("model.url is missing or invalid:", model.url);
+        return;
+      }
+
+      // Không cần rotation cho 3D tiles, đặt về 0
+      const hpr = new Cesium.HeadingPitchRoll(0, 0, 0);
+
+      // Tạo transform matrix (có thể không cần cho 3D tiles)
+      const modelMatrix = Cesium.Transforms.headingPitchRollToFixedFrame(
+        position,
+        hpr,
+        Cesium.Ellipsoid.WGS84,
+        Cesium.Transforms.localFrameToFixedFrameGenerator('east', 'north')
+      );
+
+      // Tileset URL relative to server root (served by Flask static route)
+      const tilesetUrl = model.url.startsWith('/') ? model.url : `/${model.url}`;
+      console.log("Tileset URL (relative):", tilesetUrl);
+
+      const colors = [
+        Cesium.Color.CRIMSON, Cesium.Color.ORANGE, Cesium.Color.GOLD,
+        Cesium.Color.FORESTGREEN, Cesium.Color.DODGERBLUE, Cesium.Color.MEDIUMORCHID,
+        Cesium.Color.HOTPINK, Cesium.Color.TEAL, Cesium.Color.BROWN,
+        Cesium.Color.DARKSLATEGRAY, Cesium.Color.CORAL, Cesium.Color.LIGHTSEAGREEN,
+        Cesium.Color.MEDIUMPURPLE, Cesium.Color.SANDYBROWN, Cesium.Color.STEELBLUE,
+        Cesium.Color.INDIANRED, Cesium.Color.DARKKHAKI, Cesium.Color.MEDIUMSLATEBLUE,
+        Cesium.Color.DARKGREEN, Cesium.Color.CHOCOLATE, Cesium.Color.CADETBLUE,
+        Cesium.Color.DARKORANGE, Cesium.Color.MEDIUMVIOLETRED, Cesium.Color.OLIVEDRAB,
+        Cesium.Color.ROYALBLUE, Cesium.Color.SIENNA, Cesium.Color.DARKTURQUOISE,
+        Cesium.Color.FIREBRICK, Cesium.Color.MEDIUMSEAGREEN, Cesium.Color.DARKORCHID,
+        Cesium.Color.GOLDENROD, Cesium.Color.DARKRED, Cesium.Color.DARKBLUE,
+        Cesium.Color.DARKMAGENTA
+      ];
+      // index truyền vào là thứ tự tỉnh, mỗi tỉnh 1 màu
+      const colorIndex = index % colors.length;
+      const color = colors[colorIndex];
+
+      
+      // Test truy cập trực tiếp URL và vẽ polygon theo region
+      fetch(tilesetUrl)
+        .then(response => {
+          if (response.ok) {
+            console.log("✓ Tileset URL accessible:", response.status);
+            return response.json();
+          } else {
+            console.error("✗ Tileset URL not accessible:", response.status, response.statusText);
+          }
+        })
+        .then(data => {
+          if (data && data.root && data.root.content && data.root.content.uri) {
+            const b3dmUri = data.root.content.uri;
+            // Tạo đường dẫn tuyệt đối cho b3dm
+            const b3dmUrl = tilesetUrl.replace(/\/[^/]*$/, '/') + b3dmUri;
+            console.log("Đường dẫn tile.b3dm:", b3dmUrl);
+            // Fetch và parse batch table
+            fetch(b3dmUrl)
+              .then(resp => resp.arrayBuffer())
+              .then(arrayBuffer => {
+                const batchTableData = extractBatchTableFromB3dm(arrayBuffer);
+                if (!batchTableData) {
+                  console.warn("Không có batch table trong tile.b3dm");
+                  return;
+                }
+                // Vẽ các polygon thực sự từ batch table
+                console.log(`Batch table có ${batchTableData.length} features`);
+                let count = 0;
+                const colors = [
+                  Cesium.Color.CRIMSON, Cesium.Color.ORANGE, Cesium.Color.GOLD,
+                  Cesium.Color.FORESTGREEN, Cesium.Color.DODGERBLUE, Cesium.Color.MEDIUMORCHID,
+                  Cesium.Color.HOTPINK, Cesium.Color.TEAL, Cesium.Color.BROWN,
+                  Cesium.Color.DARKSLATEGRAY, Cesium.Color.CORAL, Cesium.Color.LIGHTSEAGREEN,
+                  Cesium.Color.MEDIUMPURPLE, Cesium.Color.SANDYBROWN, Cesium.Color.STEELBLUE,
+                  Cesium.Color.INDIANRED, Cesium.Color.DARKKHAKI, Cesium.Color.MEDIUMSLATEBLUE,
+                  Cesium.Color.DARKGREEN, Cesium.Color.CHOCOLATE, Cesium.Color.CADETBLUE,
+                  Cesium.Color.DARKORANGE, Cesium.Color.MEDIUMVIOLETRED, Cesium.Color.OLIVEDRAB,
+                  Cesium.Color.ROYALBLUE, Cesium.Color.SIENNA, Cesium.Color.DARKTURQUOISE,
+                  Cesium.Color.FIREBRICK, Cesium.Color.MEDIUMSEAGREEN, Cesium.Color.DARKORCHID,
+                  Cesium.Color.GOLDENROD, Cesium.Color.DARKRED, Cesium.Color.DARKBLUE,
+                  Cesium.Color.DARKMAGENTA
+                ];
+                // Tính bounding box
+                let minLon = 180, minLat = 90, maxLon = -180, maxLat = -90;
+                for (let i = 0; i < batchTableData.length; i++) {
+                  const feature = batchTableData[i];
+                  console.log(`Processing feature ${i}:`, feature.name || 'No name', feature.geometry?.type);
+                  
+                  if (!feature.geometry) {
+                    console.warn(`Feature ${i} không có geometry`);
+                    continue;
+                  }
+                  
+                  const color = colors[i % colors.length];
+                  if (feature.geometry.type === 'Polygon') {
+                    const coords = feature.geometry.coordinates[0];
+                    viewer.entities.add({
+                      name: feature.name || `Polygon ${i+1}`,
+                      polygon: {
+                        hierarchy: Cesium.Cartesian3.fromDegreesArray(coords.flat()),
+                        height: 0,
+                        material: color.withAlpha(0.3),
+                        outline: true,
+                        outlineColor: color
+                      }
+                    });
+                    // Cập nhật bounding box
+                    coords.forEach(([lon, lat]) => {
+                      if (lon < minLon) minLon = lon;
+                      if (lon > maxLon) maxLon = lon;
+                      if (lat < minLat) minLat = lat;
+                      if (lat > maxLat) maxLat = lat;
+                    });
+                    count++;
+                  } else if (feature.geometry.type === 'MultiPolygon') {
+                    for (const poly of feature.geometry.coordinates) {
+                      for (const ring of poly) {
+                        viewer.entities.add({
+                          name: feature.name || `MultiPolygon ${i+1}`,
+                          polygon: {
+                            hierarchy: Cesium.Cartesian3.fromDegreesArray(ring.flat()),
+                            height: 0,
+                            material: color.withAlpha(0.3),
+                            outline: true,
+                            outlineColor: color
+                          }
+                        });
+                        ring.forEach(([lon, lat]) => {
+                          if (lon < minLon) minLon = lon;
+                          if (lon > maxLon) maxLon = lon;
+                          if (lat < minLat) minLat = lat;
+                          if (lat > maxLat) maxLat = lat;
+                        });
+                        count++;
+                      }
+                    }
+                  }
+                }
+                console.log(`Đã vẽ ${count} polygon từ batch table.`);
+                // Don't auto fly camera - let user control the view
+                // if (count > 0 && minLon < maxLon && minLat < maxLat) {
+                //   const rect = Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat);
+                //   viewer.camera.flyTo({
+                //     destination: rect,
+                //     duration: 2
+                //   });
+                // }
+              })
+              .catch(err => {
+                console.error("Lỗi khi fetch hoặc parse tile.b3dm:", err);
+              });
+          } else {
+            console.warn("Không tìm thấy content.uri trong tileset.json");
+          }
+        })
+        .catch(err => {
+          console.error("Error accessing tileset URL:", err);
+        });
+    }
+
+    // Load models lần đầu dựa trên mode (viewAdmin vs loadData)
+    let currentMode = 'viewAdmin';
+    let filterCategory = null;
+    let isDrawingPolygon = false;
+    let drawingPolygon = null;
+    let drawnPolygons = [];
+    let drawHandler = null;
+    let currentPolygonCategory = null; // Track current polygon category being viewed
+    
+    const modeSelector = document.getElementById('modeSelector');
+    const geojsonUploadSection = document.getElementById('geojsonUploadSection');
+    modeSelector.addEventListener('change', () => {
+      currentMode = modeSelector.value;
+      if (currentMode === 'viewAdmin') {
+        filterCategory = null;
+        geojsonUploadSection.style.display = 'none';
+        viewer.entities.removeAll();
+        loadModelsForViewport();
+      } else if (currentMode === 'viewPark') {
+        filterCategory = 'park';
+        geojsonUploadSection.style.display = 'none';
+        viewer.entities.removeAll();
+        loadModelsForViewport();
+      } else { // loadData
+        filterCategory = null;
+        geojsonUploadSection.style.display = 'block';
+        viewer.entities.removeAll();
+      }
+    });
+    // Khởi tạo ban đầu
+    if (currentMode === 'viewAdmin') {
+      filterCategory = null;
+      loadModelsForViewport();
+    } else if (currentMode === 'viewPark') {
+      filterCategory = 'park';
+      loadModelsForViewport();
+    }
+
+    // Thêm event listener cho camera movement để reload models khi viewport thay đổi
+    let lastMoveTime = 0;
+    viewer.camera.moveEnd.addEventListener(() => {
+      if (currentMode === 'viewAdmin') {
+        const now = Date.now();
+        if (now - lastMoveTime > 1000) { // Debounce 1 giây
+          lastMoveTime = now;
+          console.log("Camera moved, reloading models...");
+          loadModelsForViewport();
+        }
+      } else if (currentMode === 'viewPark') {
+        const now = Date.now();
+        if (now - lastMoveTime > 1000) { // Debounce 1 giây
+          lastMoveTime = now;
+          console.log("Camera moved, reloading park models...");
+          loadModelsForViewport();
+        }
+      } else if (currentMode === 'loadData' && currentPolygonCategory && drawnPolygons.length > 0) {
+        // Reload polygon data when camera height changes
+        const now = Date.now();
+        if (now - lastMoveTime > 1000) { // Debounce 1 giây
+          lastMoveTime = now;
+          console.log("Camera moved, reloading polygon data...");
+          loadDataByPolygonWithLOD(currentPolygonCategory);
+        }
+      }
+    });
+
+    // Hàm parse batch table từ tile.b3dm (copy từ index.html)
+    function extractBatchTableFromB3dm(arrayBuffer) {
+      try {
+        const dataView = new DataView(arrayBuffer);
+        // Read B3DM header
+        const magic = String.fromCharCode(
+          dataView.getUint8(0),
+          dataView.getUint8(1),
+          dataView.getUint8(2),
+          dataView.getUint8(3)
+        );
+        if (magic !== 'b3dm') return null;
+        const featureTableJSONByteLength = dataView.getUint32(12, true);
+        const featureTableBinaryByteLength = dataView.getUint32(16, true);
+        const batchTableJSONByteLength = dataView.getUint32(20, true);
+        const batchTableBinaryByteLength = dataView.getUint32(24, true);
+        if (batchTableJSONByteLength === 0) return null;
+        const batchTableOffset = 28 + featureTableJSONByteLength + featureTableBinaryByteLength;
+        const batchTableBytes = new Uint8Array(arrayBuffer, batchTableOffset, batchTableJSONByteLength);
+        const batchTableString = new TextDecoder().decode(batchTableBytes);
+        const batchTable = JSON.parse(batchTableString);
+        const keys = Object.keys(batchTable);
+        const featureCount = keys.length > 0 ? batchTable[keys[0]].length : 0;
+        const features = [];
+        for (let i = 0; i < featureCount; i++) {
+          const feature = {};
+          for (const key of keys) {
+            feature[key] = batchTable[key][i];
+          }
+          // Nếu có geometry thì parse lại
+          if (feature.geometry && typeof feature.geometry === 'string') {
+            try {
+              feature.geometry = JSON.parse(feature.geometry);
+            } catch (e) {}
+          }
+          features.push(feature);
+        }
+        return features;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    // GeoJSON upload handlers
+    const geojsonInput = document.getElementById('geojsonInput');
+    const loadGeojsonBtn = document.getElementById('loadGeojsonBtn');
+    const saveDataBtn = document.getElementById('saveDataBtn');
+    const saveModelBtn = document.getElementById('saveModelBtn');
+    const saveGeojsonBtn = document.getElementById('saveGeojsonBtn');
+    const drawPolygonBtn = document.getElementById('drawPolygonBtn');
+    const loadProvinceBtn = document.getElementById('loadProvinceBtn');
+    const loadWardBtn = document.getElementById('loadWardBtn');
+    const loadParkBtn = document.getElementById('loadParkBtn');
+    const clearPolygonBtn = document.getElementById('clearPolygonBtn');
+    const debugDataBtn = document.getElementById('debugDataBtn');
+    
+    geojsonInput.addEventListener('change', () => {
+      const files = geojsonInput.files;
+      const hasFiles = files && files.length > 0;
+      loadGeojsonBtn.disabled = !hasFiles;
+      saveDataBtn.disabled = !hasFiles;
+      saveModelBtn.disabled = !hasFiles;
+      saveGeojsonBtn.disabled = !hasFiles;
+      
+      // Show selected files count
+      if (hasFiles) {
+        console.log(`Selected ${files.length} file(s):`, Array.from(files).map(f => f.name));
+      }
+    });
+    loadGeojsonBtn.addEventListener('click', async () => {
+      const files = geojsonInput.files;
+      if (!files || files.length === 0) return;
+      
+      // Show loading state
+      loadGeojsonBtn.disabled = true;
+      loadGeojsonBtn.textContent = `Đang tải ${files.length} file...`;
+      
+      try {
+        // Clear existing entities
+        viewer.entities.removeAll();
+        
+        let totalFeatures = 0;
+        let minLon = 180, minLat = 90, maxLon = -180, maxLat = -90;
+        
+        // Process each file
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          console.log(`Processing file ${i + 1}/${files.length}: ${file.name}`);
+          
+          try {
+            const text = await file.text();
+            const geojsonData = JSON.parse(text);
+            
+            // Draw each feature
+            if (geojsonData.features) {
+              geojsonData.features.forEach((feature, idx) => {
+                const geom = feature.geometry;
+                if (!geom) return;
+                
+                // Update bounds and draw
+                const updateBounds = (coords) => {
+                  coords.forEach(([lon, lat]) => {
+                    minLon = Math.min(minLon, lon);
+                    minLat = Math.min(minLat, lat);
+                    maxLon = Math.max(maxLon, lon);
+                    maxLat = Math.max(maxLat, lat);
+                  });
+                };
+                
+                if (geom.type === 'Polygon') {
+                  const ring = geom.coordinates[0] || [];
+                  updateBounds(ring);
+                  drawGeometryDirectly(geom, feature.properties?.area || 0, totalFeatures);
+                  totalFeatures++;
+                } else if (geom.type === 'MultiPolygon') {
+                  geom.coordinates.forEach((poly) => {
+                    const ring = poly[0] || [];
+                    updateBounds(ring);
+                    drawGeometryDirectly({ type: 'Polygon', coordinates: [ring] }, feature.properties?.area || 0, totalFeatures);
+                    totalFeatures++;
+                  });
+                }
+              });
+            }
+            
+          } catch (fileError) {
+            console.error(`Error processing file ${file.name}:`, fileError);
+            alert(`Lỗi xử lý file ${file.name}: ${fileError.message}`);
+          }
+        }
+        
+        console.log(`Loaded ${totalFeatures} features from ${files.length} files`);
+        
+        // Don't auto fly camera when loading GeoJSON - let user control the view
+        // if (minLon < maxLon && minLat < maxLat) {
+        //   const rect = Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat);
+        //   viewer.camera.setView({
+        //     destination: rect,
+        //     orientation: { heading: 0, pitch: -Math.PI/2, roll: 0 }
+        //   });
+        // }
+        
+        alert(`✅ Đã tải ${totalFeatures} features từ ${files.length} file(s)`);
+        
+      } catch (err) {
+        console.error('Lỗi tải GeoJSON:', err);
+        alert('❌ Lỗi tải GeoJSON: ' + err.message);
+      } finally {
+        // Reset button state
+        loadGeojsonBtn.disabled = false;
+        loadGeojsonBtn.textContent = 'Tải GeoJSON';
+      }
+    });
+    
+    // Save data to database only
+    saveDataBtn.addEventListener('click', async () => {
+      const files = geojsonInput.files;
+      if (!files || files.length === 0) return;
+      
+      // Show loading state
+      saveDataBtn.disabled = true;
+      saveDataBtn.textContent = `Đang lưu ${files.length} file...`;
+      
+      let successCount = 0;
+      let errorCount = 0;
+      
+      // Prompt for category once for all files
+      const category = prompt(`Nhập category cho ${files.length} file(s) này:`, 'park');
+      if (category === null) {
+        alert('Đã hủy lưu dữ liệu');
+        saveDataBtn.disabled = false;
+        saveDataBtn.textContent = 'Lưu dữ liệu';
+        return; // User cancelled
+      }
+      
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          console.log(`Saving file ${i + 1}/${files.length}: ${file.name} with category: ${category}`);
+          
+          try {
+            const text = await file.text();
+            const geojson = JSON.parse(text);
+            
+            const fileName = file.name.replace(/\.(geojson|json)$/i, '');
+            
+            const resp = await fetch('http://localhost:5000/save-geojson-data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                name: fileName,
+                data: geojson,
+                category: category,
+                userId: 1
+              })
+            });
+            
+            if (!resp.ok) throw new Error('Save failed');
+            
+            const result = await resp.json();
+            successCount++;
+            
+            if (result.action === 'updated') {
+              console.log(`✅ Updated GeoJSON "${fileName}" in database with category: ${category}`);
+            } else {
+              console.log(`✅ Created new GeoJSON "${fileName}" in database with category: ${category}`);
+            }
+            
+          } catch (fileError) {
+            console.error(`❌ Error saving file ${file.name}:`, fileError);
+            errorCount++;
+          }
+        }
+        
+        if (successCount > 0) {
+          alert(`✅ Đã lưu thành công ${successCount}/${files.length} file(s) vào database với category "${category}"!${errorCount > 0 ? `\n❌ ${errorCount} file(s) thất bại.` : ''}`);
+        } else {
+          alert('❌ Không có file nào được lưu thành công');
+        }
+        
+      } catch (err) {
+        console.error('Lỗi lưu dữ liệu:', err);
+        alert('❌ Lỗi lưu dữ liệu: ' + err.message);
+      } finally {
+        // Reset button state
+        saveDataBtn.disabled = false;
+        saveDataBtn.textContent = 'Lưu dữ liệu';
+      }
+    });
+    
+    // Save model from GeoJSON features into models_test
+    saveModelBtn.addEventListener('click', async () => {
+      const files = geojsonInput.files;
+      if (!files || files.length === 0) return;
+      
+      // Show loading state
+      saveModelBtn.disabled = true;
+      saveModelBtn.textContent = `Đang lưu ${files.length} model...`;
+      
+      let successCount = 0;
+      let errorCount = 0;
+      
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          console.log(`Saving model ${i + 1}/${files.length}: ${file.name}`);
+          
+          try {
+            const base = file.name.replace(/\.(geojson|json)$/i, '');
+            
+            const resp = await fetch('http://localhost:5000/save-model', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: base })
+            });
+            
+            if (!resp.ok) throw new Error('Save model failed');
+            
+            const result = await resp.json();
+            successCount++;
+            
+            console.log(`✅ Saved ${result.inserted} model(s) from "${base}"`);
+            
+          } catch (fileError) {
+            console.error(`❌ Error saving model ${file.name}:`, fileError);
+            errorCount++;
+          }
+        }
+        
+        if (successCount > 0) {
+          alert(`✅ Đã lưu thành công ${successCount}/${files.length} model(s)!${errorCount > 0 ? `\n❌ ${errorCount} model(s) thất bại.` : ''}`);
+        } else {
+          alert('❌ Không có model nào được lưu thành công');
+        }
+        
+      } catch (err) {
+        console.error('Lỗi lưu model:', err);
+        alert('❌ Lỗi lưu model: ' + err.message);
+      } finally {
+        // Reset button state
+        saveModelBtn.disabled = false;
+        saveModelBtn.textContent = 'Lưu model';
+      }
+    });
+
+    // Convert GeoJSON to 3D Tiles and download ZIP
+    saveGeojsonBtn.addEventListener('click', async () => {
+      const files = geojsonInput.files;
+      if (!files || files.length === 0) return;
+      
+      // Show loading state
+      saveGeojsonBtn.disabled = true;
+      saveGeojsonBtn.textContent = `Đang xử lý ${files.length} file...`;
+      
+      let successCount = 0;
+      let errorCount = 0;
+      
+      // Prompt for category once for all files
+      const category = prompt(`Nhập category cho ${files.length} file(s) này:`, 'park');
+      if (category === null) {
+        alert('Đã hủy chuyển đổi');
+        saveGeojsonBtn.disabled = false;
+        saveGeojsonBtn.textContent = 'Chuyển đổi 3D Tiles';
+        return; // User cancelled
+      }
+      
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          console.log(`Converting file ${i + 1}/${files.length}: ${file.name} with category: ${category}`);
+          
+          try {
+            const text = await file.text();
+            const geojson = JSON.parse(text);
+            
+            const base = file.name.replace(/\.(geojson|json)$/i, '');
+            
+            // Use category for folder structure
+            const capitalizedCategory = category.charAt(0).toUpperCase() + category.slice(1);
+            const outputFolder = `${capitalizedCategory}/${base}`;
+            
+            const resp = await fetch('http://localhost:5000/convert-geojson', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              // send folder path relative to 3dtiles_data
+              body: JSON.stringify({ data: geojson, name: base, outputFolder: outputFolder })
+            });
+            
+            if (!resp.ok) throw new Error('Conversion failed');
+            
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = base + '.zip';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            successCount++;
+            console.log(`✅ Converted "${base}" to 3D Tiles successfully in folder: ${outputFolder}`);
+            
+          } catch (fileError) {
+            console.error(`❌ Error converting file ${file.name}:`, fileError);
+            errorCount++;
+          }
+        }
+        
+        if (successCount > 0) {
+          alert(`✅ Đã chuyển đổi thành công ${successCount}/${files.length} file(s) thành 3D Tiles với category "${category}"!${errorCount > 0 ? `\n❌ ${errorCount} file(s) thất bại.` : ''}`);
+        } else {
+          alert('❌ Không có file nào được chuyển đổi thành công');
+        }
+        
+      } catch (err) {
+        console.error('Lỗi chuyển đổi:', err);
+        alert('❌ Lỗi chuyển đổi GeoJSON: ' + err.message);
+      } finally {
+        // Reset button state
+        saveGeojsonBtn.disabled = false;
+        saveGeojsonBtn.textContent = 'Chuyển đổi 3D Tiles';
+      }
+    });
+    
+    // Polygon drawing functions
+    function startDrawingPolygon() {
+      if (isDrawingPolygon) return;
+      
+      isDrawingPolygon = true;
+      drawPolygonBtn.textContent = 'Đang vẽ...';
+      drawPolygonBtn.disabled = true;
+      
+      // Clear any existing drawing
+      if (drawHandler) {
+        drawHandler.destroy();
+      }
+      
+      drawHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+      let activePoints = [];
+      let activePolygon = null;
+      
+      // Left click to add point
+      drawHandler.setInputAction((click) => {
+        const pickedPosition = viewer.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
+        if (!pickedPosition) return;
+        
+        activePoints.push(pickedPosition);
+        
+        if (activePoints.length === 1) {
+          // Create polygon entity
+          activePolygon = viewer.entities.add({
+            polygon: {
+              hierarchy: new Cesium.CallbackProperty(() => {
+                return new Cesium.PolygonHierarchy(activePoints);
+              }, false),
+              material: Cesium.Color.YELLOW.withAlpha(0.3),
+              outline: true,
+              outlineColor: Cesium.Color.YELLOW,
+              height: 0,
+              extrudedHeight: 0
+            }
+          });
+        }
+      }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+      
+      // Right click or double click to finish
+      drawHandler.setInputAction(() => {
+        finishDrawing();
+      }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+      
+      drawHandler.setInputAction(() => {
+        finishDrawing();
+      }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+      
+      function finishDrawing() {
+        if (activePoints.length < 3) {
+          alert('Polygon cần ít nhất 3 điểm');
+          return;
+        }
+        
+        // Save the polygon
+        drawnPolygons.push({
+          entity: activePolygon,
+          points: activePoints.slice() // Copy array
+        });
+        
+        // Clean up
+        drawHandler.destroy();
+        drawHandler = null;
+        isDrawingPolygon = false;
+        
+        // Update UI
+        drawPolygonBtn.textContent = 'Vẽ Polygon';
+        drawPolygonBtn.disabled = false;
+        loadProvinceBtn.disabled = false;
+        loadWardBtn.disabled = false;
+        loadParkBtn.disabled = false;
+        clearPolygonBtn.disabled = false;
+        
+        console.log(`Đã vẽ polygon với ${activePoints.length} điểm`);
+      }
+    }
+    
+    function clearAllPolygons() {
+      drawnPolygons.forEach(polygon => {
+        viewer.entities.remove(polygon.entity);
+      });
+      drawnPolygons = [];
+      
+      // Clear current polygon category tracking
+      currentPolygonCategory = null;
+      
+      // Stop any active drawing
+      if (drawHandler) {
+        drawHandler.destroy();
+        drawHandler = null;
+      }
+      isDrawingPolygon = false;
+      
+      // Update UI
+      drawPolygonBtn.textContent = 'Vẽ Polygon';
+      drawPolygonBtn.disabled = false;
+      loadProvinceBtn.disabled = true;
+      loadWardBtn.disabled = true;
+      loadParkBtn.disabled = true;
+      clearPolygonBtn.disabled = true;
+    }
+    
+    async function loadDataByPolygon(category, buttonElement, categoryName) {
+      if (drawnPolygons.length === 0) {
+        alert('Vui lòng vẽ polygon trước');
+        return;
+      }
+      
+      // Set current polygon category for camera movement tracking
+      currentPolygonCategory = category;
+      
+      await loadDataByPolygonWithLOD(category, buttonElement, categoryName);
+    }
+    
+    // Enhanced function with LOD support
+async function loadDataByPolygonWithLOD(category, buttonElement = null, categoryName = null) {
+    if (drawnPolygons.length === 0) {
+        console.warn('No polygons drawn');
+        return;
+    }
+    
+    // Use the last drawn polygon
+    const polygon = drawnPolygons[drawnPolygons.length - 1];
+    
+    // Convert points to coordinates
+    const coordinates = polygon.points.map(point => {
+        const cartographic = Cesium.Cartographic.fromCartesian(point);
+        return [
+            Cesium.Math.toDegrees(cartographic.longitude),
+            Cesium.Math.toDegrees(cartographic.latitude)
+        ];
+    });
+    
+    // Close the polygon
+    coordinates.push(coordinates[0]);
+    
+    const polygonGeoJSON = {
+        type: "Polygon",
+        coordinates: [coordinates]
+    };
+    
+    // FIXED: Use consistent camera height calculation
+    const viewportInfo = getViewportInfo();
+    const cameraHeight = viewportInfo?.cameraHeight || 100000;
+    
+    console.log(`=== Loading ${categoryName || category} ===`);
+    console.log(`Camera height: ${cameraHeight.toFixed(2)}m`);
+    console.log(`Polygon:`, polygonGeoJSON);
+    
+    try {
+        if (buttonElement) {
+            buttonElement.disabled = true;
+            buttonElement.textContent = 'Đang tải...';
+        }
+        
+        // FIXED: Map category to exact database values - check your database first
+        let dbCategory = category;
+        console.log(`Category mapping: ${category} -> ${dbCategory}`);
+        
+        const requestBody = {
+            polygon: polygonGeoJSON,
+            category: dbCategory,
+            cameraHeight: cameraHeight,
+            requestId: Date.now() // Add unique ID for debugging
+        };
+        
+        console.log('Request body:', requestBody);
+        
+        const response = await fetch('http://localhost:5000/models-by-polygon', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody)
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        
+        const data = await response.json();
+        const models = data.models || [];
+        
+        console.log(`=== Response ===`);
+        console.log(`Found: ${models.length} models`);
+        console.log(`LOD params used:`, {
+            tolerance: data.simplification_tolerance,
+            minArea: data.min_area,
+            maxResults: data.max_results
+        });
+        console.log(`Query timestamp:`, data.query_timestamp);
+        
+        // Clear all existing entities (including other data)
+        viewer.entities.removeAll();
+        
+        // Re-add drawn polygons
+        drawnPolygons.forEach(drawnPolygon => {
+            drawnPolygon.entity = viewer.entities.add({
+                polygon: {
+                    hierarchy: new Cesium.PolygonHierarchy(drawnPolygon.points),
+                    material: Cesium.Color.YELLOW.withAlpha(0.3),
+                    outline: true,
+                    outlineColor: Cesium.Color.YELLOW,
+                    height: 0,
+                    extrudedHeight: 0
+                }
+            });
+        });
+        
+        // Add found models
+        if (models.length > 0) {
+            console.log('Sample models:', models.slice(0, 3).map(m => ({
+                id: m.id,
+                name: m.name,
+                area: m.area,
+                category: m.category
+            })));
+            
+            models.forEach((model, index) => processModel(model, index));
+            
+            // Calculate bounds of all models for camera
+            let minLon = 180, minLat = 90, maxLon = -180, maxLat = -90;
+            models.forEach(model => {
+                if (model.longitude && model.latitude) {
+                    minLon = Math.min(minLon, model.longitude);
+                    maxLon = Math.max(maxLon, model.longitude);
+                    minLat = Math.min(minLat, model.latitude);
+                    maxLat = Math.max(maxLat, model.latitude);
+                }
+            });
+            
+            // Don't auto fly to bounds - let user control the camera
+            // if (minLon < maxLon && minLat < maxLat) {
+            //     const rect = Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat);
+            //     viewer.camera.flyTo({
+            //         destination: rect,
+            //         duration: 2
+            //     });
+            // }
+        } else {
+            // RETRY with relaxed filters if no results
+            console.log('No results, trying with relaxed filters...');
+            
+            const retryResponse = await fetch('http://localhost:5000/models-by-polygon', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    polygon: polygonGeoJSON,
+                    category: dbCategory,
+                    cameraHeight: 1000000, // Higher camera = more relaxed filters
+                    requestId: Date.now()
+                })
+            });
+            
+            if (retryResponse.ok) {
+                const retryData = await retryResponse.json();
+                console.log(`Retry found: ${retryData.models.length} models with relaxed filters`);
+                
+                if (retryData.models.length > 0) {
+                    retryData.models.forEach((model, index) => processModel(model, index));
+                }
+            }
+        }
+        
+        if (buttonElement && categoryName) {
+            let alertMsg = `Đã tải ${models.length} ${categoryName} trong vùng đã chọn`;
+            alertMsg += `\n\nThông tin kỹ thuật:`;
+            alertMsg += `\nCamera height: ${cameraHeight.toFixed(2)}m`;
+            alertMsg += `\nTolerance: ${data.simplification_tolerance}`;
+            alertMsg += `\nMin area: ${data.min_area}`;
+            alertMsg += `\nMax results: ${data.max_results}`;
+            
+            if (models.length === 0) {
+                alertMsg += `\n\n⚠️ Không tìm thấy dữ liệu. Có thể do:`;
+                alertMsg += `\n- Camera quá cao (>${data.max_results > 200 ? '50k' : '200k'}m)`;
+                alertMsg += `\n- Vùng chọn không có dữ liệu category '${dbCategory}'`;
+                alertMsg += `\n- Dữ liệu bị lọc bởi LOD (area < ${data.min_area})`;
+            }
+            
+            alert(alertMsg);
+        }
+        
+    } catch (error) {
+        console.error(`Error loading ${categoryName || category} by polygon:`, error);
+        if (buttonElement && categoryName) {
+            alert(`Lỗi khi tải ${categoryName}: ${error.message}\n\nKiểm tra console để xem chi tiết.`);
+        }
+    } finally {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.textContent = buttonElement.getAttribute('data-original-text') || buttonElement.textContent.replace('Đang tải...', '');
+        }
+    }
+}
+    
+    // Individual load functions for each category
+    async function loadProvinceByPolygon() {
+      await loadDataByPolygon('province', loadProvinceBtn, 'tỉnh thành');
+    }
+    
+    async function loadWardByPolygon() {
+      await loadDataByPolygon('ward', loadWardBtn, 'xã phường');
+    }
+    
+    async function loadParkByPolygon() {
+      await loadDataByPolygon('park', loadParkBtn, 'công viên');
+    }
+    
+// Sửa các hàm load data by polygon trong app.html
+
+// Enhanced function with LOD support - FIX category mapping
+async function loadDataByPolygonWithLOD(category, buttonElement = null, categoryName = null) {
+    if (drawnPolygons.length === 0) {
+        console.warn('No polygons drawn');
+        return;
+    }
+    
+    // Use the last drawn polygon
+    const polygon = drawnPolygons[drawnPolygons.length - 1];
+    
+    // Convert points to coordinates
+    const coordinates = polygon.points.map(point => {
+        const cartographic = Cesium.Cartographic.fromCartesian(point);
+        return [
+            Cesium.Math.toDegrees(cartographic.longitude),
+            Cesium.Math.toDegrees(cartographic.latitude)
+        ];
+    });
+    
+    // Close the polygon
+    coordinates.push(coordinates[0]);
+    
+    const polygonGeoJSON = {
+        type: "Polygon",
+        coordinates: [coordinates]
+    };
+    
+    // Get camera height for LOD
+    const viewportInfo = getViewportInfo();
+    const cameraHeight = viewportInfo?.cameraHeight || 0;
+    
+    console.log(`Loading ${categoryName || category} data for polygon at height ${cameraHeight.toFixed(2)}m:`, polygonGeoJSON);
+    
+    try {
+        if (buttonElement) {
+            buttonElement.disabled = true;
+            buttonElement.textContent = 'Đang tải...';
+        }
+        
+        // FIX: Map category to exact database values
+        let dbCategory = category;
+        switch(category) {
+            case 'province':
+                // Try the most likely category name first
+                dbCategory = 'province'; // or check your actual database values
+                break;
+            case 'ward':
+                dbCategory = 'ward'; // or check your actual database values
+                break;
+            case 'park':
+                dbCategory = 'park';
+                break;
+        }
+        
+        const response = await fetch('http://localhost:5000/models-by-polygon', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                polygon: polygonGeoJSON,
+                category: dbCategory, // Use mapped category
+                cameraHeight: cameraHeight
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const models = data.models || [];
+        
+        console.log(`Tìm thấy ${models.length} ${categoryName || category} trong polygon`);
+        console.log('Response data:', data); // Debug response
+        
+        // Clear all existing entities (including other data)
+        viewer.entities.removeAll();
+        
+        // Re-add drawn polygons
+        drawnPolygons.forEach(drawnPolygon => {
+            drawnPolygon.entity = viewer.entities.add({
+                polygon: {
+                    hierarchy: new Cesium.PolygonHierarchy(drawnPolygon.points),
+                    material: Cesium.Color.YELLOW.withAlpha(0.3),
+                    outline: true,
+                    outlineColor: Cesium.Color.YELLOW,
+                    height: 0,
+                    extrudedHeight: 0
+                }
+            });
+        });
+        
+        // Add found models
+        if (models.length > 0) {
+            models.forEach((model, index) => processModel(model, index));
+            
+            // Don't auto fly to models - let user control the camera
+            // const firstModel = models[0];
+            // if (firstModel && firstModel.longitude && firstModel.latitude) {
+            //     viewer.camera.flyTo({
+            //         destination: Cesium.Cartesian3.fromDegrees(
+            //             firstModel.longitude, 
+            //             firstModel.latitude, 
+            //             50000
+            //         ),
+            //         duration: 2
+            //     });
+            // }
+        }
+        
+        if (buttonElement && categoryName) {
+            // Show detailed alert with debug info
+            let alertMsg = `Đã tải ${models.length} ${categoryName} trong vùng đã chọn`;
+            if (models.length === 0) {
+                alertMsg += `\n\nThông tin debug:`;
+                alertMsg += `\nCamera height: ${cameraHeight.toFixed(2)}m`;
+                alertMsg += `\nCategory: ${dbCategory}`;
+                alertMsg += `\nPolygon coordinates: ${coordinates.length} points`;
+            }
+            alert(alertMsg);
+        }
+        
+    } catch (error) {
+        console.error(`Error loading ${categoryName || category} by polygon:`, error);
+        if (buttonElement && categoryName) {
+            alert(`Lỗi khi tải ${categoryName}: ` + error.message);
+        }
+    } finally {
+        if (buttonElement) {
+            buttonElement.disabled = false;
+            buttonElement.textContent = buttonElement.getAttribute('data-original-text') || buttonElement.textContent.replace('Đang tải...', '');
+        }
+    }
+}
+
+    // Enhanced debug function
+    async function debugData() {
+        try {
+            debugDataBtn.disabled = true;
+            debugDataBtn.textContent = 'Đang kiểm tra...';
+            
+            const response = await fetch('http://localhost:5000/debug-polygon-data');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            console.log('Debug data:', data);
+            
+            let message = 'Database Debug Info:\n\n';
+            message += `Total records: ${data.total.total_count}\n`;
+            message += `Categories: ${data.total.category_count}\n\n`;
+            message += 'Category breakdown:\n';
+            data.categories.forEach(cat => {
+                message += `- ${cat.category}: ${cat.count} records\n`;
+            });
+            message += '\nSample records:\n';
+            data.samples.forEach(sample => {
+                message += `- ID ${sample.id}: ${sample.name} (${sample.category}) - Area: ${sample.area?.toFixed(2)}\n`;
+            });
+            
+            // Also test polygon intersection if we have polygons
+            if (drawnPolygons.length > 0) {
+                message += '\n--- Polygon Test ---\n';
+                const polygon = drawnPolygons[drawnPolygons.length - 1];
+                const coordinates = polygon.points.map(point => {
+                    const cartographic = Cesium.Cartographic.fromCartesian(point);
+                    return [
+                        Cesium.Math.toDegrees(cartographic.longitude),
+                        Cesium.Math.toDegrees(cartographic.latitude)
+                    ];
+                });
+                coordinates.push(coordinates[0]);
+                
+                const testResponse = await fetch('http://localhost:5000/models-by-polygon', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        polygon: { type: "Polygon", coordinates: [coordinates] },
+                        // Don't filter by category for debug
+                        cameraHeight: 100000
+                    })
+                });
+                
+                if (testResponse.ok) {
+                    const testData = await testResponse.json();
+                    message += `Found ${testData.models.length} records in polygon\n`;
+                    if (testData.models.length > 0) {
+                        const categories = [...new Set(testData.models.map(m => m.category))];
+                        message += `Categories in polygon: ${categories.join(', ')}\n`;
+                    }
+                }
+            }
+            
+            alert(message);
+            
+        } catch (error) {
+            console.error('Error in debug:', error);
+            alert('Lỗi debug: ' + error.message);
+        } finally {
+            debugDataBtn.disabled = false;
+            debugDataBtn.textContent = 'Debug Data';
+        }
+    }
+    
+    // Store original button texts
+    loadProvinceBtn.setAttribute('data-original-text', 'Tải tỉnh thành');
+    loadWardBtn.setAttribute('data-original-text', 'Tải xã phường');
+    loadParkBtn.setAttribute('data-original-text', 'Tải công viên');
+    
+    // Event listeners for polygon drawing buttons
+    drawPolygonBtn.addEventListener('click', startDrawingPolygon);
+    clearPolygonBtn.addEventListener('click', clearAllPolygons);
+    loadProvinceBtn.addEventListener('click', loadProvinceByPolygon);
+    loadWardBtn.addEventListener('click', loadWardByPolygon);
+    loadParkBtn.addEventListener('click', loadParkByPolygon);
+    debugDataBtn.addEventListener('click', debugData);
+  </script>
+</body>
+</html>

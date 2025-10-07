@@ -1,0 +1,26 @@
+{
+  "asset": {
+    "version": "1.0",
+    "generator": "Improved GeoJSON to 3D Tiles Converter",
+    "tilesetVersion": "1.0.0"
+  },
+  "properties": {},
+  "geometricError": 123230.97899999903,
+  "root": {
+    "boundingVolume": {
+      "region": [
+        1.8444926118139264,
+        0.16628034527088859,
+        1.8638690651833496,
+        0.1804694881171678,
+        0.0,
+        1000.0
+      ]
+    },
+    "geometricError": 61615.489499999516,
+    "refine": "REPLACE",
+    "content": {
+      "uri": "tile.b3dm"
+    }
+  }
+}
