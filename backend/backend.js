@@ -15,14 +15,24 @@ let viewer = null;
 
 // Initialize main viewer after DOM is loaded
 function initializeMainViewer() {
-    if (viewer) return; // Already initialized
-    
-    const cesiumContainer = document.getElementById('cesiumContainer');
-    if (!cesiumContainer) {
-        console.error('cesiumContainer not found in DOM');
-        return;
+    // If a viewer was already created (by viewer.js) prefer that one.
+    if (viewer) return;
+    try {
+        if (window.backendViewer && typeof window.backendViewer.initializeMainViewer === 'function') {
+            window.backendViewer.initializeMainViewer();
+            // backendViewer is expected to set window.viewer
+            viewer = window.viewer || (window.backendViewer.viewer ? window.backendViewer.viewer : null);
+            if (viewer) return;
+        }
+    } catch (e) {
+        // ignore and fallback to legacy creation
     }
-    
+
+    // Fallback: create legacy viewer instance
+    if (viewer) return;
+    if (window.viewer) { viewer = window.viewer; return; }
+    const cesiumContainer = document.getElementById('cesiumContainer');
+    if (!cesiumContainer) { console.error('cesiumContainer not found in DOM'); return; }
     viewer = new Cesium.Viewer('cesiumContainer', {
         terrainProvider: Cesium.CesiumTerrainProvider(),
         baseLayerPicker: true, geocoder: true, homeButton: true, sceneModePicker: true,
@@ -30,7 +40,6 @@ function initializeMainViewer() {
         vrButton: false, selectionIndicator: false, infoBox: false,
         requestRenderMode: false, maximumRenderTimeChange: Infinity
     });
-
     viewer.scene.globe.depthTestAgainstTerrain = false;
     viewer.scene.fog.enabled = true;
     viewer.scene.fog.density = 0.0001;
@@ -338,16 +347,19 @@ async function processFileContent(content, fileExtension, datasetId, datasetName
 }
 
 function addDatasetToViewer(id, type, dataSource, model = null, position = null, name = null) {
+    try {
+        if (window.backendDatasets && typeof window.backendDatasets.addDatasetToViewer === 'function') {
+            return window.backendDatasets.addDatasetToViewer(id, type, dataSource, model, position, name);
+        }
+    } catch (e) { /* fallback */ }
+
+    // Legacy fallback
     let existing = datasets.find(d => d.id === id && d.source === 'backend');
     let layers = [];
     if (dataSource) {
         const entities = dataSource.entities.values;
         const layerSet = new Set();
-        entities.forEach(entity => {
-            if (entity.properties && entity.properties.Layer) {
-                layerSet.add(entity.properties.Layer.getValue());
-            }
-        });
+        entities.forEach(entity => { if (entity.properties && entity.properties.Layer) layerSet.add(entity.properties.Layer.getValue()); });
         layers = Array.from(layerSet).map(layerName => ({ name: layerName, visible: true, color: '#3498db' }));
         console.log(`Dataset ${id} (${name}): Found ${entities.length} entities, ${layers.length} layers:`, layers);
     }
@@ -358,18 +370,12 @@ function addDatasetToViewer(id, type, dataSource, model = null, position = null,
         existing.model = model;
         existing.position = position;
         existing.visible = typeof existing.visible === 'boolean' ? existing.visible : true;
-    existing.opacity = typeof existing.opacity === 'number' ? existing.opacity : 0.7;
-    existing.layers = layers;
-    // Ensure entities use the dataset's opacity
-    applyDatasetOpacityToEntities(existing);
+        existing.opacity = typeof existing.opacity === 'number' ? existing.opacity : 0.7;
+        existing.layers = layers;
+        applyDatasetOpacityToEntities(existing);
     } else {
-        datasets.push({
-            id, source: 'backend', name: name || `Dataset ${id}`, type, dataSource, model, position,
-            visible: true, opacity: 0.7, layers
-        });
-        // Apply opacity to newly added dataset (last pushed)
-        const newDs = datasets[datasets.length - 1];
-        applyDatasetOpacityToEntities(newDs);
+        datasets.push({ id, source: 'backend', name: name || `Dataset ${id}`, type, dataSource, model, position, visible: true, opacity: 0.7, layers });
+        applyDatasetOpacityToEntities(datasets[datasets.length - 1]);
     }
     window.datasets = datasets;
     if (dataSource) cacheEntitiesOriginalAppearance(dataSource);
@@ -379,6 +385,11 @@ function addDatasetToViewer(id, type, dataSource, model = null, position = null,
 
 function cacheEntitiesOriginalAppearance(dataSource) {
     try {
+        if (window.backendDatasets && typeof window.backendDatasets.cacheEntitiesOriginalAppearance === 'function') {
+            return window.backendDatasets.cacheEntitiesOriginalAppearance(dataSource);
+        }
+    } catch (e) { /* fallback */ }
+    try {
         const now = Cesium.JulianDate.now();
         const entities = dataSource.entities.values;
         for (let i = 0; i < entities.length; i++) {
@@ -386,63 +397,30 @@ function cacheEntitiesOriginalAppearance(dataSource) {
             if (e._cachedOriginalAppearance) continue;
             const ap = {};
             if (e.point) {
-                try {
-                    const color = e.point.color?.getValue(now);
-                    ap.point = {
-                        color: color ? color.clone() : null,
-                        pixelSize: e.point.pixelSize?.getValue(now) ?? null,
-                        outlineColor: e.point.outlineColor?.getValue(now)?.clone() ?? null,
-                        outlineWidth: e.point.outlineWidth?.getValue(now) ?? null
-                    };
-                } catch (err) { ap.point = null; }
+                try { const color = e.point.color?.getValue(now); ap.point = { color: color ? color.clone() : null, pixelSize: e.point.pixelSize?.getValue(now) ?? null, outlineColor: e.point.outlineColor?.getValue(now)?.clone?.() ?? null, outlineWidth: e.point.outlineWidth?.getValue(now) ?? null }; } catch (err) { ap.point = null; }
             }
-            if (e.polyline) {
-                try {
-                    const matColor = e.polyline.material?.color?.getValue(now);
-                    ap.polyline = {
-                        materialColor: matColor ? matColor.clone() : null,
-                        width: e.polyline.width?.getValue(now) ?? null
-                    };
-                } catch (err) { ap.polyline = null; }
-            }
-            if (e.polygon) {
-                try {
-                    const matColor = e.polygon.material?.color?.getValue(now);
-                    ap.polygon = {
-                        materialColor: matColor ? matColor.clone() : null,
-                        outlineColor: e.polygon.outlineColor?.getValue(now)?.clone() ?? null,
-                        outlineWidth: e.polygon.outlineWidth?.getValue(now) ?? null
-                    };
-                } catch (err) { ap.polygon = null; }
-            }
+            if (e.polyline) { try { const matColor = e.polyline.material?.color?.getValue(now); ap.polyline = { materialColor: matColor ? matColor.clone() : null, width: e.polyline.width?.getValue(now) ?? null }; } catch (err) { ap.polyline = null; } }
+            if (e.polygon) { try { const matColor = e.polygon.material?.color?.getValue(now); ap.polygon = { materialColor: matColor ? matColor.clone() : null, outlineColor: e.polygon.outlineColor?.getValue(now)?.clone?.() ?? null, outlineWidth: e.polygon.outlineWidth?.getValue(now) ?? null }; } catch (err) { ap.polygon = null; } }
             e._cachedOriginalAppearance = ap;
         }
-    } catch (e) {
-        console.warn('Failed to cache entity appearances:', e);
-    }
+    } catch (e) { console.warn('Failed to cache entity appearances:', e); }
 }
 
 // Apply dataset.opacity to all entities in a dataset's DataSource
 function applyDatasetOpacityToEntities(dataset) {
+    try {
+        if (window.backendDatasets && typeof window.backendDatasets.applyDatasetOpacityToEntities === 'function') {
+            return window.backendDatasets.applyDatasetOpacityToEntities(dataset);
+        }
+    } catch (e) { /* fallback */ }
     if (!dataset || !dataset.dataSource) return;
     const entities = dataset.dataSource.entities.values || [];
     entities.forEach(entity => {
         try {
-            if (entity.polygon?.material instanceof Cesium.ColorMaterialProperty) {
-                const color = entity.polygon.material.color.getValue();
-                entity.polygon.material = new Cesium.ColorMaterialProperty(color.withAlpha(dataset.opacity));
-            }
-            if (entity.polyline?.material instanceof Cesium.ColorMaterialProperty) {
-                const color = entity.polyline.material.color.getValue();
-                entity.polyline.material = new Cesium.ColorMaterialProperty(color.withAlpha(dataset.opacity));
-            }
-            if (entity.point) {
-                const color = entity.point.color.getValue();
-                entity.point.color = new Cesium.ConstantProperty(color.withAlpha(dataset.opacity));
-            }
-        } catch (e) {
-            // ignore entities that don't match expected shapes
-        }
+            if (entity.polygon?.material instanceof Cesium.ColorMaterialProperty) { const color = entity.polygon.material.color.getValue(); entity.polygon.material = new Cesium.ColorMaterialProperty(color.withAlpha(dataset.opacity)); }
+            if (entity.polyline?.material instanceof Cesium.ColorMaterialProperty) { const color = entity.polyline.material.color.getValue(); entity.polyline.material = new Cesium.ColorMaterialProperty(color.withAlpha(dataset.opacity)); }
+            if (entity.point) { const color = entity.point.color.getValue(); entity.point.color = new Cesium.ConstantProperty(color.withAlpha(dataset.opacity)); }
+        } catch (e) {}
     });
 }
 
@@ -631,6 +609,14 @@ async function toggleLayer(datasetId, source, layerIdx) {
 }
 
 async function deleteDataset(id, source) {
+    // Prefer module implementation when available
+    try {
+        if (window.backendDatasets && typeof window.backendDatasets.deleteDataset === 'function') {
+            return window.backendDatasets.deleteDataset(id, source);
+        }
+    } catch (e) { /* fallback to legacy implementation below */ }
+
+    // Legacy fallback (kept for compatibility)
     const normalizedId = source === 'backend' ? parseInt(id) : id;
     const datasetIndex = datasets.findIndex(d => d.id === normalizedId && d.source === source);
     if (datasetIndex === -1) return;
@@ -696,16 +682,31 @@ function handleDragEnd(e) {
 }
 
 function moveDatasetUp(currentIndex) {
+    try {
+        if (window.backendDatasets && typeof window.backendDatasets.moveDatasetUp === 'function') {
+            return window.backendDatasets.moveDatasetUp(currentIndex);
+        }
+    } catch (e) { /* fallback */ }
     if (currentIndex >= datasets.length - 1) return;
     moveDataset(currentIndex, currentIndex + 1);
 }
 
 function moveDatasetDown(currentIndex) {
+    try {
+        if (window.backendDatasets && typeof window.backendDatasets.moveDatasetDown === 'function') {
+            return window.backendDatasets.moveDatasetDown(currentIndex);
+        }
+    } catch (e) { /* fallback */ }
     if (currentIndex <= 0) return;
     moveDataset(currentIndex, currentIndex - 1);
 }
 
 function moveDataset(fromIndex, toIndex) {
+    try {
+        if (window.backendDatasets && typeof window.backendDatasets.moveDataset === 'function') {
+            return window.backendDatasets.moveDataset(fromIndex, toIndex);
+        }
+    } catch (e) { /* fallback */ }
     if (fromIndex === toIndex) return;
     const [movedDataset] = datasets.splice(fromIndex, 1);
     datasets.splice(toIndex, 0, movedDataset);
@@ -715,41 +716,23 @@ function moveDataset(fromIndex, toIndex) {
 }
 
 function updateDataSourceZOrder() {
-    // Ensure all visible datasets are present in the main viewer and visible state is correct
+    try {
+        if (window.backendDatasets && typeof window.backendDatasets.updateDataSourceZOrder === 'function') {
+            return window.backendDatasets.updateDataSourceZOrder();
+        }
+    } catch (e) { /* fallback */ }
+    if (!viewer) return;
     datasets.forEach(dataset => {
         if (dataset.dataSource) {
-            try {
-                if (!viewer.dataSources.contains(dataset.dataSource)) {
-                    viewer.dataSources.add(dataset.dataSource);
-                }
-            } catch (e) {
-                console.warn('updateDataSourceZOrder: failed to ensure datasource present', e);
-            }
+            try { if (!viewer.dataSources.contains(dataset.dataSource)) viewer.dataSources.add(dataset.dataSource); } catch (e) { console.warn('updateDataSourceZOrder: failed to ensure datasource present', e); }
             dataset.dataSource.show = !!dataset.visible;
         }
     });
-
-    // Build a list of DataSources in the desired visual order (datasets[0] should be bottom)
     const ordered = [];
-    for (let i = 0; i < datasets.length; i++) {
-        const d = datasets[i];
-        if (d.dataSource && d.visible && viewer.dataSources.contains(d.dataSource)) {
-            ordered.push(d.dataSource);
-        }
-    }
-
-    // Remove then re-add in forward order so that DataSources corresponding to higher-index
-    // datasets are added last and therefore rendered on top.
-    ordered.forEach(ds => {
-        try { if (viewer.dataSources.contains(ds)) viewer.dataSources.remove(ds, false); } catch (e) {}
-    });
-    for (let i = 0; i < ordered.length; i++) {
-        const ds = ordered[i];
-        try { viewer.dataSources.add(ds); } catch (e) { console.warn('updateDataSourceZOrder: add failed', e); }
-    }
-
-    // Force a render update
-    viewer.scene.requestRender();
+    for (let i = 0; i < datasets.length; i++) { const d = datasets[i]; if (d.dataSource && d.visible && viewer.dataSources.contains(d.dataSource)) ordered.push(d.dataSource); }
+    ordered.forEach(ds => { try { if (viewer.dataSources.contains(ds)) viewer.dataSources.remove(ds, false); } catch (e) {} });
+    for (let i = 0; i < ordered.length; i++) { try { viewer.dataSources.add(ordered[i]); } catch (e) { console.warn('updateDataSourceZOrder: add failed', e); } }
+    try { viewer.scene.requestRender(); } catch (e) {}
 }
 
 function saveOriginalAppearance(entity) {
@@ -870,13 +853,36 @@ function calculateGeometryStats(entity) {
 
 // Initialize click handler after viewer is ready
 function initializeClickHandler() {
-    if (!viewer) {
-        console.warn('Cannot initialize click handler: viewer not ready');
-        return;
-    }
-    
-    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    // Prefer viewer module's click initializer when available so we don't duplicate handlers
+    try {
+        if (window.backendViewer && typeof window.backendViewer.initializeClickHandler === 'function') {
+            window.backendViewer.initializeClickHandler(function(pickedObject) {
+                try {
+                    if (selectedEntity && originalEntityAppearance) {
+                        restoreOriginalAppearance(selectedEntity, originalEntityAppearance);
+                        selectedEntity = null;
+                        originalEntityAppearance = null;
+                    }
+                    if (Cesium.defined(pickedObject) && Cesium.defined(pickedObject.id)) {
+                        const entity = pickedObject.id;
+                        originalEntityAppearance = saveOriginalAppearance(entity);
+                        selectedEntity = entity;
+                        if (viewer && viewer.scene) viewer.scene.requestRender();
+                        highlightEntity(entity);
+                        if (viewer && viewer.scene) viewer.scene.requestRender();
+                        showFeatureInfo(entity);
+                    } else {
+                        closeFeatureInfo();
+                    }
+                } catch (e) { console.error('click callback error', e); }
+            });
+            return;
+        }
+    } catch (e) { /* ignore */ }
 
+    // Legacy fallback
+    if (!viewer) { console.warn('Cannot initialize click handler: viewer not ready'); return; }
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction(function(click) {
         const pickedObject = viewer.scene.pick(click.position);
         if (selectedEntity && originalEntityAppearance) {
@@ -1283,7 +1289,16 @@ function getLayerColor(dataset, layerIdx) {
     }
     
     if (foundColor) {
-        return foundColor.toCssHexString();
+        try {
+            const hex = foundColor.toCssHexString();
+            // Cesium may return #rrggbbaa (8 hex digits) — HTML <input type="color"> requires #rrggbb
+            if (typeof hex === 'string' && hex.length === 9) {
+                return hex.slice(0, 7);
+            }
+            return hex;
+        } catch (e) {
+            return '#3498db';
+        }
     }
     
     return '#3498db'; // Default fallback

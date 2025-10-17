@@ -8,6 +8,16 @@
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Cesium.js"></script>
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Split backend into focused modules to separate UI rendering (frontend) from logic (backend) -->
+    <!-- backend modules are served from backend/ directory but Express static root is set to the backend folder
+        so files are accessible at http://localhost:8000/<filename> -->
+    <script src="http://localhost:8000/utils.js" defer></script>
+    <script src="http://localhost:8000/viewer.js" defer></script>
+    <script src="http://localhost:8000/datasets.js" defer></script>
+    <script src="http://localhost:8000/admin.js" defer></script>
+    <script src="http://localhost:8000/compare.js" defer></script>
+    <script src="http://localhost:8000/compat.js" defer></script>
+    <!-- Load original backend.js to preserve full dataset loading logic (temporary) -->
     <script src="http://localhost:8000/backend.js" defer></script>
     <style>
         * {
@@ -1017,6 +1027,208 @@
     </script>
 
     <script>
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmU1Zjc0Ny1kMTZhLTRhYmMtOGFjYi1hOWU1MjlhYmEzNmQiLCJpZCI6MzE5NTA2LCJpYXQiOjE3NTMyNDMwODB9.k4KeeDH7fAto4Orfeva9-sJuvQTLoSELhItVYsochBs';
+
+        // Ensure backend viewer is initialized after scripts load
+        document.addEventListener('DOMContentLoaded', function() {
+            try {
+                // Initialize Cesium viewer if backend module provided
+                if (window.backendViewer && typeof window.backendViewer.initializeMainViewer === 'function') {
+                    window.backendViewer.initializeMainViewer();
+                }
+
+                // Initialize click handler to show feature info (if a handler is available)
+                if (window.backendViewer && typeof window.backendViewer.initializeClickHandler === 'function') {
+                    // Pass a handler that forwards to showFeatureInfo if present
+                    window.backendViewer.initializeClickHandler(function(picked) {
+                        try {
+                            if (!picked) return;
+                            // If picked has id or the actual entity, try to find entity
+                            const entity = picked.id || picked; 
+                            if (entity && typeof showFeatureInfo === 'function') showFeatureInfo(entity);
+                        } catch (e) { console.warn(e); }
+                    });
+                }
+
+                // Render dataset list if any UI datasets present
+                if (typeof renderDatasetList === 'function') renderDatasetList();
+            } catch (e) {
+                console.error('Frontend init error:', e);
+            }
+        });
+
+        // Sidebar toggle (fallback frontend implementation)
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+            sidebar.classList.toggle('active');
+
+            // Basic repositioning for compare button so it doesn't overlap when sidebar opens
+            try {
+                const toggleBtn = document.querySelector('.toggle-btn');
+                const compareBtn = document.getElementById('compareModeBtn');
+                if (compareBtn && toggleBtn) {
+                    const sidebarOpen = sidebar.classList.contains('active');
+                    if (sidebarOpen) {
+                        // move compare button to the right of sidebar
+                        compareBtn.style.left = (toggleBtn.offsetWidth + 360) + 'px';
+                    } else {
+                        compareBtn.style.left = '400px';
+                    }
+                }
+            } catch (e) {
+                // ignore positioning errors
+            }
+        }
+
+        function switchTab(tabName) {
+            try {
+                const tabs = document.querySelectorAll('.tab-btn');
+                const panels = document.querySelectorAll('.tab-panel');
+                tabs.forEach(t => t.classList.remove('active'));
+                panels.forEach(p => p.classList.remove('active'));
+                const tabBtn = Array.from(tabs).find(t => t.getAttribute('onclick') && t.getAttribute('onclick').includes(tabName));
+                if (tabBtn) tabBtn.classList.add('active');
+                const panel = document.getElementById(tabName + '-panel');
+                if (panel) panel.classList.add('active');
+            } catch (e) {
+                console.warn('switchTab error', e);
+            }
+        }
+
+        // UI rendering and dataset list management moved to frontend
+        // Uses window.datasets array and backend APIs exposed on window
+        function handleDragStart(e) {
+            draggedItem = this;
+            this.style.opacity = '0.4';
+            try { e.dataTransfer.effectAllowed = 'move'; } catch (e) {}
+            this.classList.add('dragging');
+        }
+
+        function handleDragOver(e) {
+            if (e && e.preventDefault) e.preventDefault();
+            try { if (e && e.dataTransfer) e.dataTransfer.dropEffect = 'move'; } catch (e) {}
+            return false;
+        }
+
+        function handleDrop(e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            if (draggedItem !== this) {
+                const draggedIndex = parseInt(draggedItem.dataset.actualIndex);
+                const targetIndex = parseInt(this.dataset.actualIndex);
+                // Prefer backendDatasets.moveDataset if available
+                if (window.backendDatasets && typeof window.backendDatasets.moveDataset === 'function') {
+                    window.backendDatasets.moveDataset(draggedIndex, targetIndex);
+                } else if (typeof moveDataset === 'function') {
+                    moveDataset(draggedIndex, targetIndex);
+                }
+            }
+            return false;
+        }
+
+        function handleDragEnd(e) {
+            this.style.opacity = '1';
+            this.classList.remove('dragging');
+        }
+
+        function moveDatasetUp(index) { if (window.backendDatasets && window.backendDatasets.moveDataset) window.backendDatasets.moveDataset(index, index+1); if (window.renderDatasetList) window.renderDatasetList(); }
+        function moveDatasetDown(index) { if (window.backendDatasets && window.backendDatasets.moveDataset) window.backendDatasets.moveDataset(index, index-1); if (window.renderDatasetList) window.renderDatasetList(); }
+
+        function toggleLayerListSafe(datasetId) {
+            const el = document.getElementById(`layer-list-${datasetId}`);
+            if (!el) return;
+            el.classList.toggle('collapsed');
+            const icon = el.previousElementSibling && el.previousElementSibling.querySelector('.layer-toggle-icon');
+            if (icon) icon.textContent = el.classList.contains('collapsed') ? '▶' : '▼';
+        }
+
+        function renderDatasetList() {
+            const listContainer = document.getElementById('datasetList');
+            if (!listContainer) return;
+            const datasetsLocal = window.datasets || [];
+            listContainer.innerHTML = '';
+            const displayDatasets = [...datasetsLocal].reverse();
+            displayDatasets.forEach((dataset, displayIndex) => {
+                const actualIndex = datasetsLocal.length - 1 - displayIndex;
+                const item = document.createElement('div');
+                item.className = 'dataset-item';
+                item.dataset.datasetId = dataset.id;
+                item.dataset.datasetSource = dataset.source || 'ui';
+                item.dataset.actualIndex = actualIndex;
+                item.draggable = true;
+
+                let layersHtml = '';
+                if (dataset.layers && dataset.layers.length > 0) {
+                    const layerCount = dataset.layers.length;
+                    layersHtml = `
+                        <div class="layer-toggle" onclick="toggleLayerListSafe('${dataset.id}')">
+                            <span class="layer-toggle-icon">▶</span>
+                            <span class="layer-toggle-text">Layers (${layerCount})</span>
+                        </div>
+                        <div class="layer-list collapsed" id="layer-list-${dataset.id}">${dataset.layers.map((layerNameOrObj, idx) => {
+                            const layerName = typeof layerNameOrObj === 'string' ? layerNameOrObj : layerNameOrObj.name;
+                            const layerVisible = typeof layerNameOrObj === 'string' ? true : layerNameOrObj.visible;
+                            const colorVal = (typeof layerNameOrObj === 'object' && layerNameOrObj.color) ? layerNameOrObj.color : '#3498db';
+                            return `<div class="layer-item">
+                                <input type="checkbox" id="layer-${dataset.id}-${idx}" ${layerVisible ? 'checked' : ''} onchange="toggleLayerSafe('${dataset.id}', '${dataset.source}', ${idx})">
+                                <input type="color" id="color-${dataset.id}-${idx}" value="${colorVal}" onchange="changeLayerColorSafe('${dataset.id}', '${dataset.source}', ${idx}, this.value)" style="width: 30px; height: 20px; border: none; cursor: pointer; margin-right: 8px;">
+                                <label for="layer-${dataset.id}-${idx}" style="flex: 1; cursor: pointer;">${layerName}</label>
+                            </div>`;
+                        }).join('')}</div>`;
+                }
+
+                // Compare buttons
+                let compareButtonsHtml = '';
+                if (window.backendCompare || window.toggleCompareMode) {
+                    const isLeft = (window.leftDatasets || new Set()).has(dataset.id);
+                    const isRight = (window.rightDatasets || new Set()).has(dataset.id);
+                    const isBoth = isLeft && isRight;
+                    compareButtonsHtml = `
+                        <div class="compare-controls">
+                            <button class="compare-btn ${isLeft && !isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'left')" title="Show on left">L</button>
+                            <button class="compare-btn ${isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'both')" title="Show on both">B</button>
+                            <button class="compare-btn ${isRight && !isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'right')" title="Show on right">R</button>
+                        </div>`;
+                }
+
+                const canMoveUp = displayIndex > 0;
+                const canMoveDown = displayIndex < displayDatasets.length - 1;
+                item.innerHTML = `
+                    <div class="dataset-header">
+                        <div class="dataset-reorder-controls">
+                            <button class="reorder-btn" ${!canMoveUp ? 'disabled' : ''} onclick="moveDatasetUpSafe(${actualIndex})" title="Move up">▲</button>
+                            <button class="reorder-btn" ${!canMoveDown ? 'disabled' : ''} onclick="moveDatasetDownSafe(${actualIndex})" title="Move down">▼</button>
+                        </div>
+                        <div class="dataset-controls">
+                            <label class="toggle-switch">
+                                <input type="checkbox" ${dataset.visible ? 'checked' : ''} onchange="toggleDatasetSafe('${dataset.id}', '${dataset.source}', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <button class="delete-btn" onclick="deleteDatasetSafe('${dataset.id}', '${dataset.source}')">🗑️</button>
+                        </div>
+                    </div>
+                    <div class="dataset-name-row">
+                        <div class="dataset-name" title="Drag to reorder">${dataset.name}</div>
+                        ${compareButtonsHtml}
+                    </div>
+                    <div style="font-size: 11px; color: #95a5a6; margin-bottom: 10px;">Type: ${dataset.type} | Layer ${displayIndex + 1} of ${datasetsLocal.length}</div>
+                    <div class="opacity-control">
+                        <label>Opacity: <span id="opacity-value-${dataset.id}">${Math.round(dataset.opacity * 100)}%</span></label>
+                        <input type="range" min="0" max="100" value="${dataset.opacity * 100}" oninput="updateOpacitySafe('${dataset.id}', '${dataset.source}', this.value)">
+                    </div>
+                    ${layersHtml}`;
+
+                item.addEventListener('dragstart', handleDragStart);
+                item.addEventListener('dragover', handleDragOver);
+                item.addEventListener('drop', handleDrop);
+                item.addEventListener('dragend', handleDragEnd);
+                listContainer.appendChild(item);
+            });
+        }
+
+        // Expose renderDatasetList globally for backward compatibility
+        window.renderDatasetList = window.renderDatasetList || renderDatasetList;
+
         // Minimal safeCall shim: call a function exported by backend.js if available,
         // otherwise return false and avoid throwing ReferenceError. This prevents inline
         // onclick handlers from breaking when backend.js hasn't loaded yet.
