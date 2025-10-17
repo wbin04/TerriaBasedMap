@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tree Viewer - Cesium 3D Tiles</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            background: #1a1a2e;
+        }
+
+        #cesiumContainer {
+            width: 100%;
+            height: 100vh;
+        }
+
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            min-width: 320px;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
+
+        .control-panel h2 {
+            margin: 0 0 15px 0;
+            color: #2c3e50;
+            font-size: 20px;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+
+        .district-group {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+        }
+
+        .district-group h3 {
+            margin: 0 0 10px 0;
+            color: #34495e;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .district-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+
+        .district-checkbox:hover {
+            background: #e3f2fd;
+            border-color: #3498db;
+        }
+
+        .district-checkbox input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            accent-color: #3498db;
+        }
+
+        .district-checkbox label {
+            cursor: pointer;
+            font-weight: 500;
+            color: #2c3e50;
+            flex: 1;
+        }
+
+        .district-info {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 5px;
+            padding-left: 30px;
+        }
+
+        .stats {
+            margin-top: 20px;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            color: white;
+        }
+
+        .stats h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .stat-item:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-size: 18px;
+            z-index: 2000;
+            display: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .action-buttons {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #7f8c8d;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(149, 165, 166, 0.4);
+        }
+
+        .color-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    
+    <div class="loading" id="loading">
+        <span class="spinner"></span>
+        <span id="loadingText">Đang tải dữ liệu...</span>
+    </div>
+
+    <div class="control-panel">
+        <h2>🌳 Quản lý Cây Xanh Đà Nẵng</h2>
+        
+        <div id="districtControls"></div>
+
+        <div class="stats" id="stats">
+            <h3>THỐNG KÊ</h3>
+            <div class="stat-item">
+                <span class="stat-label">Tổng số cây:</span>
+                <span class="stat-value" id="totalTrees">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Đang hiển thị:</span>
+                <span class="stat-value" id="visibleDistricts">0/4 quận</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Tileset đã tải:</span>
+                <span class="stat-value" id="loadedTilesets">0</span>
+            </div>
+        </div>
+
+        <div class="action-buttons">
+            <button class="btn btn-primary" onclick="showAllDistricts()">Hiện tất cả</button>
+            <button class="btn btn-secondary" onclick="hideAllDistricts()">Ẩn tất cả</button>
+        </div>
+    </div>
+
+    <script>
+        // Cesium Ion token
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmU1Zjc0Ny1kMTZhLTRhYmMtOGFjYi1hOWU1MjlhYmEzNmQiLCJpZCI6MzE5NTA2LCJpYXQiOjE3NTMyNDMwODB9.k4KeeDH7fAto4Orfeva9-sJuvQTLoSELhItVYsochBs';
+
+        // Khởi tạo Cesium Viewer
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            terrainProvider: Cesium.CesiumTerrainProvider(),
+            baseLayerPicker: true,
+            geocoder: false,
+            homeButton: true,
+            sceneModePicker: true,
+            navigationHelpButton: false,
+            animation: false,
+            timeline: false,
+            fullscreenButton: true,
+            vrButton: false,
+            requestRenderMode: true,
+            maximumRenderTimeChange: Infinity
+        });
+
+        // Cấu hình districts
+        const districts = [
+            {
+                id: 'district_1_hai_chau',
+                name: 'Quận Hải Châu',
+                path: 'wwwroot/tree/district_1_hai_chau/tileset.json',
+                color: '#e74c3c',
+                treeCount: 1500,
+                tileset: null,
+                visible: true
+            },
+            {
+                id: 'district_2_an_hai',
+                name: 'Quận An Hải',
+                path: 'wwwroot/tree/district_2_an_hai/tileset.json',
+                color: '#3498db',
+                treeCount: 1200,
+                tileset: null,
+                visible: true
+            },
+            {
+                id: 'district_3_son_tra',
+                name: 'Quận Sơn Trà',
+                path: 'wwwroot/tree/district_3_son_tra/tileset.json',
+                color: '#2ecc71',
+                treeCount: 1000,
+                tileset: null,
+                visible: true
+            },
+            {
+                id: 'district_4_huong_tra',
+                name: 'Huyện Hương Trà',
+                path: 'wwwroot/tree/district_4_huong_tra/tileset.json',
+                color: '#f39c12',
+                treeCount: 1293,
+                tileset: null,
+                visible: true
+            }
+        ];
+
+        let loadedCount = 0;
+
+        // Tạo UI cho districts
+        function createDistrictControls() {
+            const container = document.getElementById('districtControls');
+            
+            districts.forEach(district => {
+                const group = document.createElement('div');
+                group.className = 'district-group';
+                
+                group.innerHTML = `
+                    <div class="district-checkbox">
+                        <input type="checkbox" id="checkbox_${district.id}" checked onchange="toggleDistrict('${district.id}')">
+                        <label for="checkbox_${district.id}">
+                            <span class="color-indicator" style="background: ${district.color}"></span>
+                            ${district.name}
+                        </label>
+                    </div>
+                    <div class="district-info">
+                        <span>~ ${district.treeCount} cây</span>
+                    </div>
+                `;
+                
+                container.appendChild(group);
+            });
+        }
+
+        // Load tileset cho district
+        async function loadDistrictTileset(district) {
+            try {
+                showLoading(`Đang tải ${district.name}...`);
+                
+                const tileset = await Cesium.Cesium3DTileset.fromUrl(district.path, {
+                    skipLevelOfDetail: false,
+                    baseScreenSpaceError: 1024,
+                    skipScreenSpaceErrorFactor: 16,
+                    skipLevels: 1,
+                    immediatelyLoadDesiredLevelOfDetail: false,
+                    loadSiblings: false,
+                    cullWithChildrenBounds: true,
+                    maximumScreenSpaceError: 16,
+                    maximumMemoryUsage: 512
+                });
+
+                viewer.scene.primitives.add(tileset);
+                district.tileset = tileset;
+                
+                // Style tileset với màu của district
+                tileset.style = new Cesium.Cesium3DTileStyle({
+                    color: `color("${district.color}", 0.8)`,
+                    pointSize: 8
+                });
+
+                loadedCount++;
+                updateStats();
+                
+                console.log(`✓ Loaded: ${district.name}`);
+                
+                // Nếu đây là tileset đầu tiên, bay đến vị trí
+                if (loadedCount === 1) {
+                    await viewer.zoomTo(tileset, new Cesium.HeadingPitchRange(0, -0.5, tileset.boundingSphere.radius * 2.0));
+                }
+                
+                hideLoading();
+                return tileset;
+                
+            } catch (error) {
+                console.error(`Error loading ${district.name}:`, error);
+                hideLoading();
+                alert(`Không thể tải dữ liệu cho ${district.name}. Vui lòng kiểm tra đường dẫn file.`);
+            }
+        }
+
+        // Toggle hiển thị district
+        function toggleDistrict(districtId) {
+            const district = districts.find(d => d.id === districtId);
+            const checkbox = document.getElementById(`checkbox_${districtId}`);
+            
+            if (!district) return;
+            
+            district.visible = checkbox.checked;
+            
+            if (district.tileset) {
+                district.tileset.show = checkbox.checked;
+            } else if (checkbox.checked) {
+                // Load tileset nếu chưa có
+                loadDistrictTileset(district);
+            }
+            
+            updateStats();
+        }
+
+        // Hiện tất cả districts
+        function showAllDistricts() {
+            districts.forEach(district => {
+                const checkbox = document.getElementById(`checkbox_${district.id}`);
+                checkbox.checked = true;
+                district.visible = true;
+                
+                if (district.tileset) {
+                    district.tileset.show = true;
+                } else {
+                    loadDistrictTileset(district);
+                }
+            });
+            updateStats();
+        }
+
+        // Ẩn tất cả districts
+        function hideAllDistricts() {
+            districts.forEach(district => {
+                const checkbox = document.getElementById(`checkbox_${district.id}`);
+                checkbox.checked = false;
+                district.visible = false;
+                
+                if (district.tileset) {
+                    district.tileset.show = false;
+                }
+            });
+            updateStats();
+        }
+
+        // Cập nhật thống kê
+        function updateStats() {
+            const totalTrees = districts.reduce((sum, d) => sum + d.treeCount, 0);
+            const visibleCount = districts.filter(d => d.visible).length;
+            const loadedTilesetsCount = districts.filter(d => d.tileset !== null).length;
+            
+            document.getElementById('totalTrees').textContent = totalTrees.toLocaleString();
+            document.getElementById('visibleDistricts').textContent = `${visibleCount}/4 quận`;
+            document.getElementById('loadedTilesets').textContent = loadedTilesetsCount;
+        }
+
+        // Loading indicator
+        function showLoading(text = 'Đang tải dữ liệu...') {
+            document.getElementById('loadingText').textContent = text;
+            document.getElementById('loading').classList.add('show');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('show');
+        }
+
+        // Khởi tạo
+        async function initialize() {
+            createDistrictControls();
+            updateStats();
+            
+            // Set camera position to Da Nang
+            viewer.camera.setView({
+                destination: Cesium.Cartesian3.fromDegrees(108.2022, 16.0544, 15000),
+                orientation: {
+                    heading: Cesium.Math.toRadians(0),
+                    pitch: Cesium.Math.toRadians(-45),
+                    roll: 0.0
+                }
+            });
+
+            // Load tất cả tilesets
+            showLoading('Đang tải dữ liệu các quận...');
+            
+            for (const district of districts) {
+                await loadDistrictTileset(district);
+            }
+            
+            hideLoading();
+            console.log('✓ Tất cả tilesets đã được tải thành công!');
+        }
+
+        // Enable lighting
+        viewer.scene.globe.enableLighting = true;
+
+        // Start
+        initialize();
+
+        // Debug: Click on entity to show info
+        const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+        handler.setInputAction(function(movement) {
+            const pickedFeature = viewer.scene.pick(movement.position);
+            if (Cesium.defined(pickedFeature)) {
+                console.log('Picked feature:', pickedFeature);
+                
+                // Highlight picked feature
+                if (pickedFeature instanceof Cesium.Cesium3DTileFeature) {
+                    const propertyIds = pickedFeature.getPropertyIds();
+                    console.log('Properties:', propertyIds.map(id => `${id}: ${pickedFeature.getProperty(id)}`));
+                }
+            }
+        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    </script>
+</body>
+</html>

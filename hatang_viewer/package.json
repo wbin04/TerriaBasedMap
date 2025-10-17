@@ -1,0 +1,22 @@
+{
+  "name": "hatang-viewer",
+  "version": "1.0.0",
+  "description": "Viewer for infrastructure 3D tiles data using Cesium",
+  "main": "hatang_server.js",
+  "scripts": {
+    "start": "node hatang_server.js",
+    "dev": "node hatang_server.js"
+  },
+  "keywords": [
+    "cesium",
+    "3dtiles",
+    "viewer",
+    "infrastructure"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  }
+}

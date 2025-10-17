@@ -7,7 +7,6 @@
         const cesiumContainer = document.getElementById('cesiumContainer');
         if (!cesiumContainer) { console.error('cesiumContainer not found in DOM'); return; }
         viewer = new Cesium.Viewer('cesiumContainer', {
-            terrainProvider: Cesium.CesiumTerrainProvider(),
             baseLayerPicker: true, geocoder: true, homeButton: true, sceneModePicker: true,
             navigationHelpButton: true, animation: false, timeline: false, fullscreenButton: true,
             vrButton: false, selectionIndicator: false, infoBox: false,

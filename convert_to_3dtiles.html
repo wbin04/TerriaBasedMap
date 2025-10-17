@@ -1,0 +1,1413 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoJSON to 3D Tiles Converter</title>
+    <style>
+        #fileResults {
+            max-height: 320px;
+            overflow-y: auto;
+            padding: 8px 4px;
+            background: #f6fafd;
+            border-radius: 10px;
+            border: 1.5px solid #e1e5e9;
+            box-shadow: 0 2px 8px rgba(79,172,254,0.06);
+        }
+        .file-result {
+            margin-bottom: 12px;
+            padding: 16px 14px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+            border-left: 5px solid #4facfe;
+            border-top: 1px solid #e1e5e9;
+        }
+        .file-result:last-child {
+            margin-bottom: 0;
+        }
+        .file-result.success {
+            border-left-color: #28a745;
+        }
+        .file-result.error {
+            border-left-color: #dc3545;
+        }
+        .file-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 1.05rem;
+        }
+        .file-info {
+            color: #666;
+            font-size: 0.95rem;
+            margin-bottom: 12px;
+        }
+        .download-links {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .download-link {
+            background: #4facfe;
+            color: white;
+            text-decoration: none;
+            padding: 7px 13px;
+            border-radius: 5px;
+            font-size: 0.92rem;
+            transition: background 0.3s ease;
+        }
+        .download-link:hover {
+            background: #2196F3;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        .main-content {
+            padding: 40px;
+        }
+
+        .upload-area {
+            border: 3px dashed #4facfe;
+            border-radius: 15px;
+            padding: 24px 10px;
+            text-align: center;
+            margin-bottom: 0;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            background: linear-gradient(45deg, rgba(79, 172, 254, 0.05) 0%, rgba(0, 242, 254, 0.05) 100%);
+            min-height: 140px;
+            max-height: 180px;
+            width: 260px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        #uploadedFilesContainer {
+            min-width: 260px;
+            max-width: 350px;
+            height: 180px;
+            overflow-y: auto;
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            border: 2px solid #4facfe;
+            box-shadow: 0 2px 8px rgba(79,172,254,0.08);
+            padding: 12px 16px 8px 16px;
+            display: none;
+        }
+        #uploadedFilesContainer h4 {
+            margin-bottom: 10px;
+            position: sticky;
+            top: 0;
+            background: rgba(255,255,255,0.98);
+            z-index: 1;
+            padding-top: 4px;
+            padding-bottom: 4px;
+        }
+        #uploadedFilesList {
+            list-style: none;
+            padding-left: 0;
+            margin: 0;
+        }
+        #uploadedFilesList li {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            border-bottom: 1px solid #e1e5e9;
+            padding-bottom: 4px;
+        }
+        #uploadedFilesList li:last-child {
+            border-bottom: none;
+        }
+        #uploadedFilesList button {
+            background: #f5576c;
+            color: white;
+            border: none;
+            padding: 4px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        #uploadedFilesList button:hover {
+            background: #d90429;
+        }
+
+        .upload-area:hover {
+            border-color: #00f2fe;
+            background: linear-gradient(45deg, rgba(79, 172, 254, 0.1) 0%, rgba(0, 242, 254, 0.1) 100%);
+            transform: translateY(-2px);
+        }
+
+        .upload-area.dragover {
+            border-color: #00f2fe;
+            background: linear-gradient(45deg, rgba(79, 172, 254, 0.15) 0%, rgba(0, 242, 254, 0.15) 100%);
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            color: #4facfe;
+            margin-bottom: 20px;
+        }
+
+        .upload-text {
+            font-size: 1.2rem;
+            color: #555;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .control-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .control-group input,
+        .control-group select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .control-group input:focus,
+        .control-group select:focus {
+            outline: none;
+            border-color: #4facfe;
+        }
+
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: #4facfe;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(79, 172, 254, 0.4);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .btn-secondary:hover {
+            box-shadow: 0 8px 20px rgba(245, 87, 108, 0.4);
+        }
+
+        .progress-container {
+            margin-bottom: 30px;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e1e5e9;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .results-container {
+            display: none;
+            margin-top: 30px;
+        }
+
+        .results-header {
+            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px 10px 0 0;
+            font-weight: 600;
+        }
+
+        .results-content {
+            background: #f8f9fa;
+            border-radius: 0 0 10px 10px;
+            padding: 20px;
+        }
+
+        .file-result {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-left: 5px solid #4facfe;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .file-result.success {
+            border-left-color: #28a745;
+        }
+
+        .file-result.error {
+            border-left-color: #dc3545;
+        }
+
+        .file-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .file-info {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+        }
+
+        .download-links {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .download-link {
+            background: #4facfe;
+            color: white;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+            transition: background 0.3s ease;
+        }
+
+        .download-link:hover {
+            background: #2196F3;
+        }
+
+        .log-container {
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #4facfe;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+            }
+            
+            .checkbox-group {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .download-links {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌍 GeoJSON to 3D Tiles</h1>
+            <p>Chuyển đổi file GeoJSON thành 3D Tiles format với batch table geometry</p>
+        </div>
+
+        <div class="main-content">
+            <div id="uploadArea" style="display: flex; gap: 30px; align-items: flex-start; margin-bottom: 30px;">
+                <div class="upload-area" onclick="document.getElementById('fileInput').click()" style="flex:1;">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">Click để chọn file GeoJSON hoặc kéo thả vào đây</div>
+                    <div class="upload-hint">Hỗ trợ file .geojson, .json (có thể chọn thư mục hoặc nhiều file)</div>
+                </div>
+                <div id="uploadedFilesContainer" style="min-width:260px;max-width:350px;display:none;height:180px;overflow-y:auto;background:rgba(255,255,255,0.8);border-radius:15px;border:2px solid #e1e5e9;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                    <h4 style="margin-bottom:10px;position:sticky;top:0;background:rgba(255,255,255,0.95);z-index:1;">📄 Danh sách file đã tải lên:</h4>
+                    <ul id="uploadedFilesList" style="list-style:none; padding-left:0; margin:0;"></ul>
+                </div>
+            </div>
+                    <input type="file" id="fileInput" accept=".geojson,.json" multiple webkitdirectory directory>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>Tên output mặc định:</label>
+                    <input type="text" id="outputName" placeholder="tileset" value="tileset">
+                </div>
+                <div class="control-group">
+                    <label>Geometric Error:</label>
+                    <input type="number" id="geometricError" value="1000" min="1">
+                </div>
+                <div class="control-group">
+                    <label>Chiều cao tối đa (m):</label>
+                    <input type="number" id="maxHeight" value="1000" min="0">
+                </div>
+            </div>
+
+            <div class="checkbox-group">
+                <div class="checkbox-item">
+                    <input type="checkbox" id="includeProperties" checked>
+                    <label>Bao gồm properties trong batch table</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="validateOutput" checked>
+                    <label>Validate kết quả sau khi tạo</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="createDebugInfo">
+                    <label>Tạo debug information</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="showLogs">
+                    <label>Hiển thị logs</label>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn" id="convertBtn" disabled>🚀 Bắt đầu chuyển đổi</button>
+                <button class="btn btn-secondary" id="clearBtn">🗑️ Xóa tất cả</button>
+                <button class="btn btn-secondary" id="downloadAllBtn" style="display:none">📦 Tải xuống tất cả</button>
+            </div>
+
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Đang xử lý...</div>
+            </div>
+
+            <div class="log-container" id="logContainer"></div>
+
+            <div class="results-container" id="resultsContainer">
+                <div class="results-header">
+                    <h3>📊 Kết quả chuyển đổi</h3>
+                </div>
+                <div class="results-content">
+                    <div class="stats" id="statsContainer"></div>
+                    <div id="fileResults"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class GeoJSONTo3DTilesConverter {
+            constructor() {
+                this.files = [];
+                this.results = [];
+                this.processedCount = 0;
+                this.setupEventListeners();
+                this.log('🎯 GeoJSON to 3D Tiles Converter đã sẵn sàng');
+            }
+
+            setupEventListeners() {
+                const fileInput = document.getElementById('fileInput');
+                const uploadArea = document.querySelector('.upload-area');
+                const convertBtn = document.getElementById('convertBtn');
+                const clearBtn = document.getElementById('clearBtn');
+                const downloadAllBtn = document.getElementById('downloadAllBtn');
+                const showLogs = document.getElementById('showLogs');
+
+                // File input events
+                fileInput.addEventListener('change', (e) => this.handleFiles(e.target.files));
+                
+                // Drag and drop events
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.classList.remove('dragover');
+                });
+
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                    this.handleFiles(e.dataTransfer.files);
+                });
+
+                // Button events
+                convertBtn.addEventListener('click', () => this.convertAll());
+                clearBtn.addEventListener('click', () => this.clearAll());
+                downloadAllBtn.addEventListener('click', () => this.downloadAll());
+                showLogs.addEventListener('change', (e) => {
+                    document.getElementById('logContainer').style.display = e.target.checked ? 'block' : 'none';
+                });
+            }
+
+            handleFiles(fileList) {
+                const newFiles = Array.from(fileList).filter(file => {
+                    const isGeoJSON = file.name.toLowerCase().endsWith('.geojson') || 
+                                     file.name.toLowerCase().endsWith('.json');
+                    if (!isGeoJSON) {
+                        this.log(`⚠️ Bỏ qua file không phải GeoJSON: ${file.name}`);
+                        return false;
+                    }
+                    // Không thêm file trùng tên
+                    if (this.files.some(f => f.name === file.name)) {
+                        this.log(`⚠️ File đã tồn tại: ${file.name}`);
+                        return false;
+                    }
+                    return true;
+                });
+
+                this.files.push(...newFiles);
+                this.updateUI();
+                this.renderUploadedFiles();
+                this.log(`📁 Đã thêm ${newFiles.length} file GeoJSON. Tổng: ${this.files.length} file`);
+            }
+
+            renderUploadedFiles() {
+                const container = document.getElementById('uploadedFilesContainer');
+                const list = document.getElementById('uploadedFilesList');
+                list.innerHTML = '';
+                if (this.files.length === 0) {
+                    container.style.display = 'none';
+                    return;
+                }
+                container.style.display = 'block';
+                this.files.forEach((file, idx) => {
+                    const li = document.createElement('li');
+                    li.style.display = 'flex';
+                    li.style.alignItems = 'center';
+                    li.style.marginBottom = '8px';
+                    li.innerHTML = `<span style="flex:1;">${file.name}</span>` +
+                        `<button style="background:#f5576c;color:white;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;" onclick="converter.removeFile(${idx})">Xoá</button>`;
+                    list.appendChild(li);
+                });
+            }
+
+            removeFile(index) {
+                if (index >= 0 && index < this.files.length) {
+                    const removed = this.files.splice(index, 1);
+                    this.log(`🗑️ Đã xoá file: ${removed[0].name}`);
+                    this.updateUI();
+                    this.renderUploadedFiles();
+                }
+            }
+
+            updateUI() {
+                const convertBtn = document.getElementById('convertBtn');
+                convertBtn.disabled = this.files.length === 0;
+                convertBtn.textContent = this.files.length > 0 ? 
+                    `🚀 Chuyển đổi ${this.files.length} file` : 
+                    '🚀 Bắt đầu chuyển đổi';
+                this.renderUploadedFiles();
+            }
+
+            async convertAll() {
+                if (this.files.length === 0) return;
+
+                this.results = [];
+                this.processedCount = 0;
+                this.showProgress(true);
+                this.hideResults();
+
+                const startTime = Date.now();
+                this.log(`🚀 Bắt đầu chuyển đổi ${this.files.length} file...`);
+
+                for (let i = 0; i < this.files.length; i++) {
+                    const file = this.files[i];
+                    this.updateProgress((i / this.files.length) * 100, `Đang xử lý: ${file.name}`);
+                    
+                    try {
+                        const result = await this.convertSingleFile(file);
+                        this.results.push(result);
+                        this.processedCount++;
+                    } catch (error) {
+                        this.log(`❌ Lỗi xử lý file ${file.name}: ${error.message}`);
+                        this.results.push({
+                            fileName: file.name,
+                            success: false,
+                            error: error.message
+                        });
+                    }
+                }
+
+                const elapsed = (Date.now() - startTime) / 1000;
+                this.updateProgress(100, 'Hoàn thành!');
+                this.showResults(elapsed);
+                
+                setTimeout(() => this.showProgress(false), 2000);
+            }
+
+            async convertSingleFile(file) {
+                this.log(`📊 Đang xử lý: ${file.name}`);
+
+                // Đọc file GeoJSON
+                const geoJsonContent = await this.readFileAsText(file);
+                const geoJsonData = JSON.parse(geoJsonContent);
+
+                // Validate GeoJSON
+                if (!this.validateGeoJSON(geoJsonData)) {
+                    throw new Error('File không phải GeoJSON hợp lệ');
+                }
+
+                // Xử lý features
+                let features = geoJsonData.features || [];
+                if (geoJsonData.type === 'Feature') {
+                    features = [geoJsonData];
+                }
+
+                if (features.length === 0) {
+                    throw new Error('Không tìm thấy features trong file');
+                }
+
+                this.log(`  📊 Tìm thấy ${features.length} features`);
+
+                // Tính toán bounds
+                const bounds = this.calculateBounds(geoJsonData);
+                if (!bounds) {
+                    throw new Error('Không thể tính toán bounds');
+                }
+
+                this.log(`  🗺️ Bounds: [${bounds.join(', ')}]`);
+
+                // Tạo tileset.json
+                const tileset = this.createTilesetJSON(bounds, file.name);
+
+                // Tạo B3DM tile
+                const b3dmData = this.createB3DMWithGeometry(geoJsonData, bounds);
+
+                // Tạo debug info nếu được yêu cầu
+                let debugInfo = null;
+                if (document.getElementById('createDebugInfo').checked) {
+                    debugInfo = this.createDebugInfo(geoJsonData, file.name);
+                }
+
+                this.log(`  ✅ Hoàn thành: ${file.name}`);
+
+                return {
+                    fileName: file.name,
+                    success: true,
+                    tileset: tileset,
+                    b3dm: b3dmData,
+                    debugInfo: debugInfo,
+                    featuresCount: features.length,
+                    bounds: bounds,
+                    fileSize: file.size
+                };
+            }
+
+            validateGeoJSON(data) {
+                if (!data || typeof data !== 'object') return false;
+                
+                const type = data.type?.toLowerCase();
+                return type === 'featurecollection' || 
+                       type === 'feature' || 
+                       type === 'geometrycollection' ||
+                       Array.isArray(data.features) ||
+                       data.geometry;
+            }
+
+            calculateBounds(geoJsonData) {
+                let minLon = Infinity, minLat = Infinity;
+                let maxLon = -Infinity, maxLat = -Infinity;
+                let validCoordsFound = false;
+
+                const features = geoJsonData.features || [geoJsonData];
+
+                for (const feature of features) {
+                    const geometry = feature.geometry;
+                    if (!geometry || !geometry.coordinates) continue;
+
+                    const processCoordinates = (coords, depth = 0) => {
+                        if (depth === 0 && typeof coords[0] === 'number' && coords.length >= 2) {
+                            // Point coordinate
+                            const [lon, lat] = coords;
+                            if (lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90) {
+                                minLon = Math.min(minLon, lon);
+                                maxLon = Math.max(maxLon, lon);
+                                minLat = Math.min(minLat, lat);
+                                maxLat = Math.max(maxLat, lat);
+                                validCoordsFound = true;
+                            }
+                        } else if (Array.isArray(coords)) {
+                            for (const subCoords of coords) {
+                                processCoordinates(subCoords, depth - 1);
+                            }
+                        }
+                    };
+
+                    // Xác định độ sâu dựa trên loại geometry
+                    let depth = 0;
+                    switch (geometry.type) {
+                        case 'Point': depth = 0; break;
+                        case 'MultiPoint':
+                        case 'LineString': depth = 1; break;
+                        case 'MultiLineString':
+                        case 'Polygon': depth = 2; break;
+                        case 'MultiPolygon': depth = 3; break;
+                    }
+
+                    processCoordinates(geometry.coordinates, depth);
+                }
+
+                if (!validCoordsFound) return null;
+                return [minLon, minLat, maxLon, maxLat];
+            }
+
+            createTilesetJSON(bounds, fileName) {
+                const [minLon, minLat, maxLon, maxLat] = bounds;
+                const geometricError = parseFloat(document.getElementById('geometricError').value) || 1000;
+                const maxHeight = parseFloat(document.getElementById('maxHeight').value) || 1000;
+
+                const width = maxLon - minLon;
+                const height = maxLat - minLat;
+                const calculatedError = Math.max(width, height) * 111000; // Chuyển độ sang mét
+                const finalGeometricError = Math.max(calculatedError, geometricError);
+
+                return {
+                    asset: {
+                        version: "1.0",
+                        generator: "GeoJSON to 3D Tiles Converter (JavaScript)",
+                        tilesetVersion: "1.0.0"
+                    },
+                    properties: {},
+                    geometricError: finalGeometricError,
+                    root: {
+                        boundingVolume: {
+                            region: [
+                                minLon * Math.PI / 180,  // west
+                                minLat * Math.PI / 180,  // south
+                                maxLon * Math.PI / 180,  // east
+                                maxLat * Math.PI / 180,  // north
+                                0.0,                     // minimum height
+                                maxHeight                // maximum height
+                            ]
+                        },
+                        geometricError: finalGeometricError / 2,
+                        refine: "REPLACE",
+                        content: {
+                            uri: "tile.b3dm"
+                        }
+                    }
+                };
+            }
+
+            createB3DMWithGeometry(geoJsonData, bounds) {
+                const features = geoJsonData.features || [geoJsonData];
+                
+                // Tạo feature table
+                const featureTable = {
+                    BATCH_LENGTH: features.length,
+                    RTC_CENTER: [0.0, 0.0, 0.0]
+                };
+
+                // Tạo batch table với geometry data
+                const batchTable = this.createBatchTable(features);
+
+                // Tạo glTF geometry đơn giản
+                const gltfData = this.createSimpleGLTFGeometry(bounds);
+
+                // Serialize tables
+                const featureTableJSON = new TextEncoder().encode(JSON.stringify(featureTable));
+                const batchTableJSON = new TextEncoder().encode(JSON.stringify(batchTable));
+
+                // Padding to 4-byte alignment
+                const featureTableJSONPadded = this.padTo4Bytes(featureTableJSON);
+                const batchTableJSONPadded = this.padTo4Bytes(batchTableJSON);
+                const gltfDataPadded = this.padTo4Bytes(gltfData);
+
+                // B3DM header
+                const magic = new TextEncoder().encode('b3dm');
+                const version = new Uint32Array([1]);
+                
+                const featureTableJSONLength = featureTableJSONPadded.length;
+                const featureTableBinaryLength = 0;
+                const batchTableJSONLength = batchTableJSONPadded.length;
+                const batchTableBinaryLength = 0;
+                const gltfLength = gltfDataPadded.length;
+
+                const headerLength = 28;
+                const totalLength = headerLength + featureTableJSONLength + featureTableBinaryLength +
+                                 batchTableJSONLength + batchTableBinaryLength + gltfLength;
+
+                // Tạo B3DM data
+                const b3dmData = new Uint8Array(totalLength);
+                let offset = 0;
+
+                // Header
+                b3dmData.set(magic, offset); offset += 4;
+                b3dmData.set(new Uint8Array(version.buffer), offset); offset += 4;
+                b3dmData.set(new Uint8Array(new Uint32Array([totalLength]).buffer), offset); offset += 4;
+                b3dmData.set(new Uint8Array(new Uint32Array([featureTableJSONLength]).buffer), offset); offset += 4;
+                b3dmData.set(new Uint8Array(new Uint32Array([featureTableBinaryLength]).buffer), offset); offset += 4;
+                b3dmData.set(new Uint8Array(new Uint32Array([batchTableJSONLength]).buffer), offset); offset += 4;
+                b3dmData.set(new Uint8Array(new Uint32Array([batchTableBinaryLength]).buffer), offset); offset += 4;
+
+                // Data
+                b3dmData.set(featureTableJSONPadded, offset); offset += featureTableJSONLength;
+                b3dmData.set(batchTableJSONPadded, offset); offset += batchTableJSONLength;
+                b3dmData.set(gltfDataPadded, offset);
+
+                this.log(`  📝 B3DM size: ${totalLength.toLocaleString()} bytes`);
+                return b3dmData;
+            }
+
+            createBatchTable(features) {
+                const batchTable = {};
+                const includeProperties = document.getElementById('includeProperties').checked;
+
+                // Lưu geometry data
+                const geometryData = features.map(feature => 
+                    feature.geometry ? JSON.stringify(feature.geometry) : null
+                );
+                batchTable.geometry = geometryData;
+
+                if (includeProperties) {
+                    // Phân tích properties để tìm các key quan trọng
+                    const propertyStats = {};
+                    
+                    features.forEach(feature => {
+                        const properties = feature.properties || {};
+                        Object.keys(properties).forEach(key => {
+                            if (!propertyStats[key]) {
+                                propertyStats[key] = { count: 0, samples: [] };
+                            }
+                            propertyStats[key].count++;
+                            if (propertyStats[key].samples.length < 3) {
+                                propertyStats[key].samples.push(properties[key]);
+                            }
+                        });
+                    });
+
+                    // Chọn các property quan trọng
+                    const importantKeys = Object.keys(propertyStats).filter(key => {
+                        const stat = propertyStats[key];
+                        const frequency = stat.count / features.length;
+                        
+                        // Include nếu xuất hiện ở hơn 50% features
+                        if (frequency >= 0.5) {
+                            // Include nếu có từ khóa quan trọng
+                            const hasImportantKeyword = ['name', 'id', 'code', 'tinh', 'xa', 'huyen', 'admin', 'level']
+                                .some(keyword => key.toLowerCase().includes(keyword));
+                            
+                            if (hasImportantKeyword) return true;
+                            
+                            // Include nếu giá trị ngắn
+                            const hasShortValues = stat.samples.every(val => 
+                                val === null || val === undefined || String(val).length < 100
+                            );
+                            
+                            if (hasShortValues) return true;
+                        }
+                        
+                        return false;
+                    });
+
+                    // Thêm properties vào batch table
+                    importantKeys.forEach(key => {
+                        batchTable[key] = features.map(feature => {
+                            const value = feature.properties?.[key];
+                            if (value !== null && value !== undefined && typeof value === 'object') {
+                                return JSON.stringify(value);
+                            }
+                            return value;
+                        });
+                    });
+
+                    this.log(`  📊 Batch table keys: ${Object.keys(batchTable).join(', ')}`);
+                }
+
+                return batchTable;
+            }
+
+            createSimpleGLTFGeometry(bounds) {
+                const [minLon, minLat, maxLon, maxLat] = bounds;
+                
+                const gltf = {
+                    asset: { version: "2.0" },
+                    scene: 0,
+                    scenes: [{ nodes: [0] }],
+                    nodes: [{ mesh: 0 }],
+                    meshes: [{
+                        primitives: [{
+                            attributes: { POSITION: 0 },
+                            indices: 1,
+                            material: 0
+                        }]
+                    }],
+                    materials: [{
+                        pbrMetallicRoughness: {
+                            baseColorFactor: [0.8, 0.8, 0.8, 1.0],
+                            metallicFactor: 0.0,
+                            roughnessFactor: 1.0
+                        }
+                    }],
+                    accessors: [
+                        {
+                            bufferView: 0,
+                            byteOffset: 0,
+                            componentType: 5126,  // FLOAT
+                            count: 4,
+                            type: "VEC3",
+                            min: [minLon, minLat, 0],
+                            max: [maxLon, maxLat, 100]
+                        },
+                        {
+                            bufferView: 1,
+                            byteOffset: 0,
+                            componentType: 5123,  // UNSIGNED_SHORT
+                            count: 6,
+                            type: "SCALAR"
+                        }
+                    ],
+                    bufferViews: [
+                        {
+                            buffer: 0,
+                            byteOffset: 0,
+                            byteLength: 48,  // 4 vertices * 3 floats * 4 bytes
+                            target: 34962   // ARRAY_BUFFER
+                        },
+                        {
+                            buffer: 0,
+                            byteOffset: 48,
+                            byteLength: 12,  // 6 indices * 2 bytes
+                            target: 34963   // ELEMENT_ARRAY_BUFFER
+                        }
+                    ],
+                    buffers: [{
+                        byteLength: 60  // 48 + 12
+                    }]
+                };
+
+                // Tạo vertices (4 góc của bounds)
+                const vertices = new Float32Array([
+                    minLon, minLat, 0.0,     // bottom-left
+                    maxLon, minLat, 0.0,     // bottom-right
+                    maxLon, maxLat, 100.0,   // top-right
+                    minLon, maxLat, 100.0    // top-left
+                ]);
+
+                // Tạo indices (2 tam giác)
+                const indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+
+                // Tạo GLB (Binary glTF)
+                const jsonData = new TextEncoder().encode(JSON.stringify(gltf));
+                let jsonLength = jsonData.length;
+
+                // Pad JSON to 4-byte boundary
+                const jsonPadding = (4 - (jsonLength % 4)) % 4;
+                const paddedJsonData = new Uint8Array(jsonLength + jsonPadding);
+                paddedJsonData.set(jsonData);
+                for (let i = jsonLength; i < paddedJsonData.length; i++) {
+                    paddedJsonData[i] = 0x20; // space
+                }
+                jsonLength = paddedJsonData.length;
+
+                // Tạo binary data
+                const binaryData = new Uint8Array(vertices.buffer.byteLength + indices.buffer.byteLength);
+                binaryData.set(new Uint8Array(vertices.buffer), 0);
+                binaryData.set(new Uint8Array(indices.buffer), vertices.buffer.byteLength);
+                
+                let binaryLength = binaryData.length;
+                const binaryPadding = (4 - (binaryLength % 4)) % 4;
+                const paddedBinaryData = new Uint8Array(binaryLength + binaryPadding);
+                paddedBinaryData.set(binaryData);
+                binaryLength = paddedBinaryData.length;
+
+                // GLB header
+                const glbHeader = new ArrayBuffer(12);
+                const glbView = new DataView(glbHeader);
+                glbView.setUint32(0, 0x46546C67, true); // magic 'glTF'
+                glbView.setUint32(4, 2, true);          // version
+                glbView.setUint32(8, 12 + 8 + jsonLength + 8 + binaryLength, true); // total length
+
+                // JSON chunk header
+                const jsonChunkHeader = new ArrayBuffer(8);
+                const jsonChunkView = new DataView(jsonChunkHeader);
+                jsonChunkView.setUint32(0, jsonLength, true);
+                jsonChunkView.setUint32(4, 0x4E4F534A, true); // 'JSON'
+
+                // Binary chunk header
+                const binaryChunkHeader = new ArrayBuffer(8);
+                const binaryChunkView = new DataView(binaryChunkHeader);
+                binaryChunkView.setUint32(0, binaryLength, true);
+                binaryChunkView.setUint32(4, 0x004E4942, true); // 'BIN\0'
+
+                // Combine all parts
+                const totalLength = glbHeader.byteLength + jsonChunkHeader.byteLength + 
+                                  paddedJsonData.length + binaryChunkHeader.byteLength + paddedBinaryData.length;
+                const result = new Uint8Array(totalLength);
+                
+                let offset = 0;
+                result.set(new Uint8Array(glbHeader), offset); offset += glbHeader.byteLength;
+                result.set(new Uint8Array(jsonChunkHeader), offset); offset += jsonChunkHeader.byteLength;
+                result.set(paddedJsonData, offset); offset += paddedJsonData.length;
+                result.set(new Uint8Array(binaryChunkHeader), offset); offset += binaryChunkHeader.byteLength;
+                result.set(paddedBinaryData, offset);
+
+                return result;
+            }
+
+            createDebugInfo(geoJsonData, fileName) {
+                const features = geoJsonData.features || [geoJsonData];
+                const geometryTypes = {};
+                const propertyKeys = {};
+                const sampleFeatures = [];
+
+                features.forEach((feature, index) => {
+                    const geometry = feature.geometry || {};
+                    const properties = feature.properties || {};
+
+                    // Count geometry types
+                    const geomType = geometry.type || 'Unknown';
+                    geometryTypes[geomType] = (geometryTypes[geomType] || 0) + 1;
+
+                    // Analyze properties
+                    Object.keys(properties).forEach(key => {
+                        if (!propertyKeys[key]) {
+                            propertyKeys[key] = { count: 0, types: new Set(), samples: [] };
+                        }
+                        propertyKeys[key].count++;
+                        propertyKeys[key].types.add(typeof properties[key]);
+                        if (propertyKeys[key].samples.length < 3) {
+                            propertyKeys[key].samples.push(properties[key]);
+                        }
+                    });
+
+                    // Sample features
+                    if (index < 3) {
+                        sampleFeatures.push({
+                            index,
+                            geometryType: geomType,
+                            properties: Object.keys(properties).reduce((acc, key) => {
+                                const value = properties[key];
+                                if (typeof value === 'string' && value.length < 200) {
+                                    acc[key] = value;
+                                } else if (typeof value !== 'object') {
+                                    acc[key] = value;
+                                }
+                                return acc;
+                            }, {})
+                        });
+                    }
+                });
+
+                // Convert property analysis
+                const propertyAnalysis = {};
+                Object.keys(propertyKeys).forEach(key => {
+                    const info = propertyKeys[key];
+                    propertyAnalysis[key] = {
+                        count: info.count,
+                        frequency: info.count / features.length,
+                        types: Array.from(info.types),
+                        samples: info.samples
+                    };
+                });
+
+                return {
+                    fileName,
+                    totalFeatures: features.length,
+                    geometryTypes,
+                    propertyKeys: propertyAnalysis,
+                    bounds: this.calculateBounds(geoJsonData),
+                    sampleFeatures
+                };
+            }
+
+            padTo4Bytes(data) {
+                const remainder = data.length % 4;
+                if (remainder === 0) return data;
+                
+                const padding = 4 - remainder;
+                const result = new Uint8Array(data.length + padding);
+                result.set(data);
+                // Fill padding with spaces
+                for (let i = data.length; i < result.length; i++) {
+                    result[i] = 0x20;
+                }
+                return result;
+            }
+
+            async readFileAsText(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = (e) => reject(new Error('Không thể đọc file'));
+                    reader.readAsText(file, 'utf-8');
+                });
+            }
+
+            showProgress(show) {
+                document.getElementById('progressContainer').style.display = show ? 'block' : 'none';
+            }
+
+            updateProgress(percent, text) {
+                document.getElementById('progressFill').style.width = percent + '%';
+                document.getElementById('progressText').textContent = text;
+            }
+
+            hideResults() {
+                document.getElementById('resultsContainer').style.display = 'none';
+                document.getElementById('downloadAllBtn').style.display = 'none';
+            }
+
+            showResults(elapsed) {
+                const resultsContainer = document.getElementById('resultsContainer');
+                const statsContainer = document.getElementById('statsContainer');
+                const fileResults = document.getElementById('fileResults');
+                const downloadAllBtn = document.getElementById('downloadAllBtn');
+
+                // Clear previous results
+                statsContainer.innerHTML = '';
+                fileResults.innerHTML = '';
+
+                // Calculate stats
+                const totalFiles = this.results.length;
+                const successFiles = this.results.filter(r => r.success).length;
+                const failedFiles = totalFiles - successFiles;
+                const totalFeatures = this.results.reduce((sum, r) => sum + (r.featuresCount || 0), 0);
+
+                // Create stats cards
+                const stats = [
+                    { number: totalFiles, label: 'Tổng file xử lý' },
+                    { number: successFiles, label: 'Thành công' },
+                    { number: failedFiles, label: 'Thất bại' },
+                    { number: totalFeatures.toLocaleString(), label: 'Tổng features' },
+                    { number: elapsed.toFixed(1) + 's', label: 'Thời gian xử lý' }
+                ];
+
+                stats.forEach(stat => {
+                    const card = document.createElement('div');
+                    card.className = 'stat-card';
+                    card.innerHTML = `
+                        <div class="stat-number">${stat.number}</div>
+                        <div class="stat-label">${stat.label}</div>
+                    `;
+                    statsContainer.appendChild(card);
+                });
+
+                // Create file result cards
+                this.results.forEach((result, index) => {
+                    const card = document.createElement('div');
+                    card.className = `file-result ${result.success ? 'success' : 'error'}`;
+                    
+                    if (result.success) {
+                        const tilesetSize = new Blob([JSON.stringify(result.tileset)]).size;
+                        const b3dmSize = result.b3dm.length;
+                        
+                        card.innerHTML = `
+                            <div class="file-name">📁 ${result.fileName}</div>
+                            <div class="file-info">
+                                Features: ${result.featuresCount.toLocaleString()} | 
+                                Bounds: [${result.bounds.map(b => b.toFixed(4)).join(', ')}]<br>
+                                Tileset: ${tilesetSize.toLocaleString()} bytes | 
+                                B3DM: ${b3dmSize.toLocaleString()} bytes | 
+                                Tổng: ${(tilesetSize + b3dmSize).toLocaleString()} bytes
+                            </div>
+                            <div class="download-links">
+                                <a href="#" class="download-link" onclick="converter.downloadTileset(${index})">
+                                    📄 Tải tileset.json
+                                </a>
+                                <a href="#" class="download-link" onclick="converter.downloadB3DM(${index})">
+                                    📦 Tải tile.b3dm
+                                </a>
+                                ${result.debugInfo ? `<a href="#" class="download-link" onclick="converter.downloadDebugInfo(${index})">🔍 Debug info</a>` : ''}
+                            </div>
+                        `;
+                    } else {
+                        card.innerHTML = `
+                            <div class="file-name">❌ ${result.fileName}</div>
+                            <div class="file-info">Lỗi: ${result.error}</div>
+                        `;
+                    }
+                    
+                    fileResults.appendChild(card);
+                });
+
+                resultsContainer.style.display = 'block';
+                if (successFiles > 0) {
+                    downloadAllBtn.style.display = 'inline-block';
+                }
+
+                this.log(`📊 Hoàn thành! ${successFiles}/${totalFiles} file thành công trong ${elapsed.toFixed(1)}s`);
+            }
+
+            downloadTileset(index) {
+                const result = this.results[index];
+                if (!result.success) return;
+
+                const blob = new Blob([JSON.stringify(result.tileset, null, 2)], 
+                    { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${result.fileName.replace(/\.(geojson|json)$/i, '')}_tileset.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            downloadB3DM(index) {
+                const result = this.results[index];
+                if (!result.success) return;
+
+                const blob = new Blob([result.b3dm], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${result.fileName.replace(/\.(geojson|json)$/i, '')}_tile.b3dm`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            downloadDebugInfo(index) {
+                const result = this.results[index];
+                if (!result.success || !result.debugInfo) return;
+
+                const blob = new Blob([JSON.stringify(result.debugInfo, null, 2)], 
+                    { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${result.fileName.replace(/\.(geojson|json)$/i, '')}_debug.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            async downloadAll() {
+                const JSZip = await this.loadJSZip();
+                if (!JSZip) return;
+
+                const zip = new JSZip();
+                const successResults = this.results.filter(r => r.success);
+
+                this.log('📦 Đang tạo file ZIP chứa tất cả kết quả...');
+
+                // Tạo tên file zip dựa trên tên các file đã tải lên
+                const fileNames = successResults.map(r => r.fileName.replace(/\.(geojson|json)$/i, ''));
+                let zipName = fileNames.join(' - ');
+                if (!zipName) zipName = '3dtiles_conversion_results';
+                zipName += '.zip';
+
+                successResults.forEach(result => {
+                    const baseName = result.fileName.replace(/\.(geojson|json)$/i, '');
+                    // Add tileset.json
+                    zip.file(`${baseName}/tileset.json`, JSON.stringify(result.tileset, null, 2));
+                    // Add tile.b3dm
+                    zip.file(`${baseName}/tile.b3dm`, result.b3dm);
+                    // Add debug info if available
+                    if (result.debugInfo) {
+                        zip.file(`${baseName}/debug.json`, JSON.stringify(result.debugInfo, null, 2));
+                    }
+                });
+
+                // Create README
+                const readme = `# 3D Tiles Conversion Results
+
+Chuyển đổi từ ${successResults.length} file GeoJSON thành 3D Tiles format.
+
+## Cách sử dụng:
+
+1. Upload các thư mục con lên web server
+2. Load file tileset.json trong Cesium viewer
+3. Geometry data được lưu trong batch table của tile.b3dm
+
+## Files được tạo:
+
+${successResults.map(r => `- ${r.fileName.replace(/\.(geojson|json)$/i, '')}/
+  - tileset.json: Metadata của tileset
+  - tile.b3dm: Binary tile chứa geometry data
+  ${r.debugInfo ? '- debug.json: Thông tin debug\n' : ''}`).join('\n')}
+
+Generated by GeoJSON to 3D Tiles Converter (JavaScript)
+`;
+
+                zip.file('README.md', readme);
+
+                const blob = await zip.generateAsync({ type: 'blob' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = zipName;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                this.log(`✅ Đã tải xuống file ZIP: ${zipName}`);
+            }
+
+            async loadJSZip() {
+                if (window.JSZip) return window.JSZip;
+
+                try {
+                    const script = document.createElement('script');
+                    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+                    document.head.appendChild(script);
+
+                    await new Promise((resolve, reject) => {
+                        script.onload = resolve;
+                        script.onerror = reject;
+                    });
+
+                    return window.JSZip;
+                } catch (error) {
+                    this.log('❌ Không thể load JSZip library');
+                    alert('Không thể tải thư viện JSZip. Vui lòng thử lại sau.');
+                    return null;
+                }
+            }
+
+            clearAll() {
+                this.files = [];
+                this.results = [];
+                this.processedCount = 0;
+                document.getElementById('fileInput').value = '';
+                this.hideResults();
+                this.showProgress(false);
+                this.updateUI();
+                this.renderUploadedFiles();
+                this.log('🗑️ Đã xóa tất cả dữ liệu');
+            }
+
+            log(message) {
+                const logContainer = document.getElementById('logContainer');
+                const timestamp = new Date().toLocaleTimeString();
+                logContainer.innerHTML += `[${timestamp}] ${message}\n`;
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+        }
+
+        // Initialize converter when page loads
+        let converter;
+        document.addEventListener('DOMContentLoaded', () => {
+            converter = new GeoJSONTo3DTilesConverter();
+        });
+    </script>
+</body>
+</html>

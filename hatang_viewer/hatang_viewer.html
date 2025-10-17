@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hạ Tầng Viewer - Cesium 3D Tiles</title>
+    
+    <!-- Cesium CSS -->
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    
+    <style>
+        html, body, #cesiumContainer {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        
+        #controlPanel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(42, 42, 42, 0.9);
+            padding: 15px;
+            border-radius: 5px;
+            color: white;
+            font-family: Arial, sans-serif;
+            max-width: 300px;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 1000;
+        }
+        
+        #controlPanel h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 16px;
+            border-bottom: 1px solid #666;
+            padding-bottom: 5px;
+        }
+        
+        .control-group {
+            margin-bottom: 15px;
+        }
+        
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        
+        .control-group button {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 5px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .control-group button:hover {
+            background: #45a049;
+        }
+        
+        .control-group button.active {
+            background: #2196F3;
+        }
+        
+        .province-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .province-item {
+            padding: 5px;
+            margin: 2px 0;
+            background: #555;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        
+        .province-item:hover {
+            background: #666;
+        }
+        
+        #loadingIndicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+            display: none;
+            z-index: 2000;
+        }
+        
+        .info-text {
+            font-size: 11px;
+            color: #ccc;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    
+    <div id="loadingIndicator">
+        <div>Đang tải dữ liệu...</div>
+    </div>
+    
+    <div id="controlPanel">
+        <h3>🗺️ Hạ Tầng Viewer</h3>
+        
+        <div class="control-group">
+            <button id="loadAllBtn">Tải tất cả tỉnh</button>
+            <button id="loadDaNangBtn">Tải Đà Nẵng</button>
+            <button id="clearAllBtn">Xóa tất cả</button>
+        </div>
+        
+        <div class="control-group">
+            <label>Điều chỉnh độ cao mô hình:</label>
+            <input type="range" id="heightOffset" min="-100" max="100" value="0" step="1" style="width: 100%;">
+            <div style="text-align: center; font-size: 11px;"><span id="heightValue">0</span> m</div>
+        </div>
+        
+        <div class="control-group">
+            <label>Các tỉnh đã tải:</label>
+            <div id="loadedTilesets" class="info-text">Chưa có dữ liệu</div>
+        </div>
+        
+        <div class="info-text">
+            <strong>Hướng dẫn:</strong><br>
+            • Click chuột trái + kéo: Xoay<br>
+            • Cuộn chuột: Zoom<br>
+            • Click chuột phải + kéo: Di chuyển<br>
+            • Giữ Ctrl + Click trái: Nghiêng
+        </div>
+    </div>
+
+    <!-- Cesium JavaScript -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Cesium.js"></script>
+    
+    <script>
+        // Thiết lập Cesium Ion access token
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmU1Zjc0Ny1kMTZhLTRhYmMtOGFjYi1hOWU1MjlhYmEzNmQiLCJpZCI6MzE5NTA2LCJpYXQiOjE3NTMyNDMwODB9.k4KeeDH7fAto4Orfeva9-sJuvQTLoSELhItVYsochBs';
+        
+        // Khởi tạo Cesium Viewer
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            terrainProvider: Cesium.CesiumTerrainProvider(),
+            timeline: false,
+            animation: false,
+            geocoder: true,
+            homeButton: true,
+            sceneModePicker: true,
+            baseLayerPicker: true,
+            navigationHelpButton: true,
+            fullscreenButton: true,
+            vrButton: false,
+            infoBox: true,
+            selectionIndicator: true,
+            // Bật đổ bóng để mô hình 3D đẹp hơn
+            shadows: true
+        });
+        
+        // Cấu hình để tải GLB models tốt hơn
+        viewer.scene.light = new Cesium.DirectionalLight({
+            direction: new Cesium.Cartesian3(0.2, 0.5, -0.8)
+        });
+        
+        // Bật depth testing để các model hiển thị đúng
+        viewer.scene.globe.depthTestAgainstTerrain = true;
+        
+        // Lưu trữ các tileset đã tải
+        const loadedTilesets = new Map();
+        let heightOffset = 0;
+        
+        // Đường dẫn gốc đến thư mục tileset
+        const BASE_URL = '../wwwroot/Tileset_Ha_tang/';
+        
+        // Hàm hiển thị loading
+        function showLoading(show) {
+            document.getElementById('loadingIndicator').style.display = show ? 'block' : 'none';
+        }
+        
+        // Hàm cập nhật danh sách tileset đã tải
+        function updateLoadedList() {
+            const listElement = document.getElementById('loadedTilesets');
+            if (loadedTilesets.size === 0) {
+                listElement.textContent = 'Chưa có dữ liệu';
+            } else {
+                const names = Array.from(loadedTilesets.keys());
+                listElement.textContent = names.join(', ');
+            }
+        }
+        
+        // Hàm tải tileset
+        async function loadTileset(url, name) {
+            try {
+                showLoading(true);
+                
+                // Kiểm tra nếu đã tải rồi thì không tải lại
+                if (loadedTilesets.has(name)) {
+                    console.log(`Tileset ${name} đã được tải`);
+                    showLoading(false);
+                    return loadedTilesets.get(name);
+                }
+                
+                console.log(`Đang tải tileset: ${url}`);
+                
+                const tileset = await Cesium.Cesium3DTileset.fromUrl(url, {
+                    maximumScreenSpaceError: 16,
+                    maximumMemoryUsage: 512,
+                    // Cấu hình để tải GLB models
+                    skipLevelOfDetail: false,
+                    baseScreenSpaceError: 1024,
+                    skipScreenSpaceErrorFactor: 16,
+                    skipLevels: 1,
+                    immediatelyLoadDesiredLevelOfDetail: false,
+                    loadSiblings: false,
+                    cullWithChildrenBounds: true
+                });
+                
+                // Đảm bảo GLB models được render đúng
+                tileset.style = new Cesium.Cesium3DTileStyle({
+                    color: "color('white')",
+                    show: true
+                });
+                
+                // Thêm tileset vào scene
+                viewer.scene.primitives.add(tileset);
+                
+                // Thêm event listener để kiểm tra loading
+                tileset.allTilesLoaded.addEventListener(() => {
+                    console.log(`✓ Tất cả tiles của ${name} đã được tải`);
+                });
+                
+                tileset.loadProgress.addEventListener((numberOfPendingRequests, numberOfTilesProcessing) => {
+                    if ((numberOfPendingRequests === 0) && (numberOfTilesProcessing === 0)) {
+                        console.log(`✓ Hoàn thành tải: ${name}`);
+                    }
+                });
+                
+                tileset.tileLoad.addEventListener((tile) => {
+                    console.log(`  - Đã tải tile:`, tile.content?.url || 'unknown');
+                });
+                
+                tileset.tileFailed.addEventListener((error) => {
+                    console.error(`✗ Lỗi tải tile:`, error);
+                });
+                
+                // Áp dụng height offset nếu có
+                if (heightOffset !== 0) {
+                    applyHeightOffsetToTileset(tileset, heightOffset);
+                }
+                
+                // Lưu tileset
+                loadedTilesets.set(name, tileset);
+                updateLoadedList();
+                
+                // Zoom đến tileset đầu tiên được tải
+                if (loadedTilesets.size === 1) {
+                    viewer.zoomTo(tileset);
+                }
+                
+                console.log(`✓ Đã tải thành công: ${name}`);
+                showLoading(false);
+                
+                return tileset;
+                
+            } catch (error) {
+                console.error(`Lỗi khi tải tileset ${name}:`, error);
+                showLoading(false);
+                alert(`Không thể tải dữ liệu ${name}. Vui lòng kiểm tra console để biết chi tiết.`);
+            }
+        }
+        
+        // Hàm áp dụng height offset cho tileset
+        function applyHeightOffsetToTileset(tileset, offset) {
+            const cartographic = Cesium.Cartographic.fromCartesian(
+                tileset.boundingSphere.center
+            );
+            const surface = Cesium.Cartesian3.fromRadians(
+                cartographic.longitude,
+                cartographic.latitude,
+                0.0
+            );
+            const offsetVector = Cesium.Cartesian3.fromRadians(
+                cartographic.longitude,
+                cartographic.latitude,
+                offset
+            );
+            const translation = Cesium.Cartesian3.subtract(
+                offsetVector,
+                surface,
+                new Cesium.Cartesian3()
+            );
+            tileset.modelMatrix = Cesium.Matrix4.fromTranslation(translation);
+        }
+        
+        // Hàm tải tất cả các tỉnh
+        async function loadAllProvinces() {
+            const url = BASE_URL + 'vietnam_provinces.json';
+            await loadTileset(url, 'Tất cả các tỉnh');
+        }
+        
+        // Hàm tải riêng Đà Nẵng
+        async function loadDaNang() {
+            const url = BASE_URL + 'Tinh/danang.json';
+            const tileset = await loadTileset(url, 'Đà Nẵng');
+            
+            // Zoom đến Đà Nẵng
+            if (tileset) {
+                viewer.zoomTo(tileset, new Cesium.HeadingPitchRange(
+                    0.0,
+                    -0.5,
+                    tileset.boundingSphere.radius * 2.0
+                ));
+            }
+        }
+        
+        // Hàm xóa tất cả tileset
+        function clearAllTilesets() {
+            loadedTilesets.forEach((tileset, name) => {
+                viewer.scene.primitives.remove(tileset);
+                console.log(`Đã xóa: ${name}`);
+            });
+            loadedTilesets.clear();
+            updateLoadedList();
+        }
+        
+        // Event listeners cho các nút
+        document.getElementById('loadAllBtn').addEventListener('click', loadAllProvinces);
+        document.getElementById('loadDaNangBtn').addEventListener('click', loadDaNang);
+        document.getElementById('clearAllBtn').addEventListener('click', clearAllTilesets);
+        
+        // Event listener cho height offset slider
+        document.getElementById('heightOffset').addEventListener('input', (event) => {
+            heightOffset = parseFloat(event.target.value);
+            document.getElementById('heightValue').textContent = heightOffset;
+            
+            // Áp dụng offset cho tất cả tileset đã tải
+            loadedTilesets.forEach((tileset) => {
+                applyHeightOffsetToTileset(tileset, heightOffset);
+            });
+        });
+        
+        // Thiết lập camera ban đầu tại Việt Nam
+        viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(108.2022, 16.0544, 50000), // Đà Nẵng
+            orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(-45),
+                roll: 0.0
+            }
+        });
+        
+        // Thêm xử lý click vào đối tượng 3D
+        viewer.screenSpaceEventHandler.setInputAction(function(movement) {
+            const pickedFeature = viewer.scene.pick(movement.position);
+            if (Cesium.defined(pickedFeature)) {
+                console.log('Đã click vào:', pickedFeature);
+                
+                // Hiển thị thông tin nếu có
+                if (pickedFeature.getProperty) {
+                    const properties = pickedFeature.getPropertyNames();
+                    if (properties.length > 0) {
+                        let info = '<table class="cesium-infoBox-defaultTable"><tbody>';
+                        properties.forEach(prop => {
+                            const value = pickedFeature.getProperty(prop);
+                            info += `<tr><th>${prop}</th><td>${value}</td></tr>`;
+                        });
+                        info += '</tbody></table>';
+                        
+                        viewer.selectedEntity = new Cesium.Entity({
+                            name: 'Thông tin',
+                            description: info
+                        });
+                    }
+                }
+            }
+        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+        
+        // Tự động tải Đà Nẵng khi khởi động
+        console.log('🚀 Cesium Viewer đã sẵn sàng!');
+        console.log('📍 Sẵn sàng tải dữ liệu 3D Tiles từ:', BASE_URL);
+        
+        // Tải Đà Nẵng mặc định
+        loadDaNang();
+        
+    </script>
+</body>
+</html>

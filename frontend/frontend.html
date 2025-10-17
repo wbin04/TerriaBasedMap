@@ -16,6 +16,8 @@
     <script src="http://localhost:8000/datasets.js" defer></script>
     <script src="http://localhost:8000/admin.js" defer></script>
     <script src="http://localhost:8000/compare.js" defer></script>
+    <script src="http://localhost:8000/tree.js" defer></script>
+    <script src="http://localhost:8000/hatang.js" defer></script>
     <script src="http://localhost:8000/compat.js" defer></script>
     <!-- Load original backend.js to preserve full dataset loading logic (temporary) -->
     <script src="http://localhost:8000/backend.js" defer></script>
@@ -705,7 +707,7 @@
                     <input type="text" placeholder="Search datasets..." id="searchInput">
                 </div>
                 <div class="explore-categories">
-                    <!-- Replaced default categories with administrative viewer entry -->
+                    <!-- Administrative viewer entry -->
                     <div class="category-item" id="adminCategory"
                         style="display:flex; justify-content:space-between; align-items:center;">
                         <div>
@@ -715,6 +717,32 @@
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <button id="adminLoadBtn" style="padding:6px 10px; font-size:12px;"
                                 onclick="loadAdminData()">Xem</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Tree viewer entry -->
+                    <div class="category-item" id="treeCategory"
+                        style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div class="category-title">🌳 Xem cây xanh</div>
+                            <div class="category-description">Hiển thị dữ liệu cây xanh Đà Nẵng (3D Tiles)</div>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <button id="treeLoadBtn" style="padding:6px 10px; font-size:12px;"
+                                onclick="loadTreeData()">Xem</button>
+                        </div>
+                    </div>
+
+                    <!-- Infrastructure viewer entry -->
+                    <div class="category-item" id="hatangCategory"
+                        style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div class="category-title">🏗️ Xem hạ tầng</div>
+                            <div class="category-description">Hiển thị dữ liệu hạ tầng 3D (3D Tiles)</div>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <button id="hatangLoadBtn" style="padding:6px 10px; font-size:12px;"
+                                onclick="loadHatangData()">Xem</button>
                         </div>
                     </div>
                 </div>

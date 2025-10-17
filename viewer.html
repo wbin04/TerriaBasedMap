@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <title>Vietnam 3D Tiles Viewer - Enhanced</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>@import url(https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css);</style>
+    <style>
+        html, body, #cesiumContainer {
+            width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
+        }
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(42, 42, 42, 0.95);
+            padding: 8px 10px;
+            border-radius: 8px;
+            z-index: 1000;
+            max-width: 220px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(8px);
+        }
+        #toolbar h3 { 
+            color: white; 
+            margin: 0 0 10px 0; 
+            text-align: center;
+            font-size: 1rem;
+        }
+        #toolbar button, #toolbar select, #toolbar input {
+            margin: 6px 0;
+            padding: 8px;
+            width: 100%;
+            box-sizing: border-box;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s ease;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        #loadFolderBtn, #loadZipBtn {
+            display: block;
+            margin-bottom: 4px;
+            width: 100%;
+            max-width: 100%;
+        }
+        #toolbar button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-weight: 600;
+        }
+        #toolbar button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        #toolbar button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        #toolbar select {
+            background: white;
+            border: 2px solid #e1e5e9;
+        }
+        #toolbar input[type="file"] {
+            background: #f8f9fa;
+            border: 2px dashed #667eea;
+            color: #333;
+        }
+        #toolbar input[type="file"]:hover {
+            border-color: #764ba2;
+            background: #f0f4ff;
+        }
+        .selector-section {
+            background: rgba(255, 255, 255, 0.08);
+            padding: 12px;
+            border-radius: 8px;
+            margin: 8px 0;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+        .selector-section h4 {
+            color: white;
+            margin: 0 0 8px 0;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+        .upload-section {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .upload-section h4 {
+            color: white;
+            margin: 0 0 10px 0;
+            font-size: 1rem;
+        }
+        .upload-section p {
+            color: #ccc;
+            font-size: 0.85rem;
+            margin: 5px 0;
+            line-height: 1.4;
+        }
+        #status {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(42, 42, 42, 0.95);
+            color: white;
+            padding: 15px;
+            border-radius: 12px;
+            max-width: 500px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 200px;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        #debugPanel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(42, 42, 42, 0.95);
+            padding: 15px;
+            border-radius: 12px;
+            color: white;
+            max-width: 400px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            max-height: 400px;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        #featureDetails {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(42, 42, 42, 0.95);
+            padding: 15px;
+            border-radius: 12px;
+            color: white;
+            max-width: 350px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        .error { color: #ff6b6b; }
+        .success { color: #4CAF50; }
+        .warning { color: #ffa726; }
+        .info { color: #42a5f5; }
+        .debug { color: #ab47bc; }
+        .feature-row {
+            padding: 2px 0;
+            border-bottom: 1px solid #555;
+        }
+        .feature-success { color: #4CAF50; }
+        .feature-failed { color: #ff6b6b; }
+        .feature-skipped { color: #ffa726; }
+        
+        #uploadProgress {
+            display: none;
+            margin-top: 10px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 5px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #81C784);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            color: #ccc;
+            font-size: 0.8rem;
+            text-align: center;
+        }
+        
+        .file-list {
+            max-height: 150px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 8px;
+            margin-top: 4px;
+            margin-bottom: 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .file-item {
+            color: #ccc;
+            font-size: 0.8rem;
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-item.tileset {
+            color: #4CAF50;
+        }
+        .file-item.b3dm {
+            color: #42a5f5;
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    
+    <div id="toolbar">
+        <h3>🗺️ Vietnam 3D Tiles Viewer</h3>
+        
+        <!-- Section cho tải dữ liệu -->
+        <div class="selector-section">
+            <h4>📥 Tải dữ liệu</h4>
+            <select id="uploadSelector">
+                <option value="" selected>Chọn cách tải dữ liệu</option>
+                <option value="uploadFolder">📁 Tải thư mục từ máy tính</option>
+                <option value="uploadZipFile">📦 Tải file ZIP</option>
+                <option value="uploadGeojsonFile">📄 Tải file GeoJSON</option>
+            </select>
+        </div>
+
+        <!-- Section cho xem dữ liệu có sẵn -->
+        <div class="selector-section">
+            <h4>👁️ Xem dữ liệu có sẵn</h4>
+            <select id="viewSelector">
+                <option value="" selected>Chọn dữ liệu để hiển thị</option>
+                <option value="3dtiles_data/TinhThanh/Viet_Nam/tileset.json">Tỉnh thành Việt Nam</option>
+                <option value="3dtiles_data/XaPhuong/An Giang/tileset.json">Xã/Phường An Giang</option>
+                <option value="3dtiles_data/XaPhuong/Bắc Ninh/tileset.json">Xã/Phường Bắc Ninh</option>
+                <option value="3dtiles_data/XaPhuong/Cà Mau/tileset.json">Xã/Phường Cà Mau</option>
+                <option value="3dtiles_data/XaPhuong/Cần Thơ/tileset.json">Xã/Phường Cần Thơ</option>
+                <option value="3dtiles_data/XaPhuong/Cao Bằng/tileset.json">Xã/Phường Cao Bằng</option>
+                <option value="3dtiles_data/XaPhuong/Đà Nẵng/tileset.json">Xã/Phường Đà Nẵng</option>
+                <option value="3dtiles_data/XaPhuong/Đắk Lắk/tileset.json">Xã/Phường Đắk Lắk</option>
+                <option value="3dtiles_data/XaPhuong/Điện Biên/tileset.json">Xã/Phường Điện Biên</option>
+                <option value="3dtiles_data/XaPhuong/Đồng Nai/tileset.json">Xã/Phường Đồng Nai</option>
+                <option value="3dtiles_data/XaPhuong/Đồng Tháp/tileset.json">Xã/Phường Đồng Tháp</option>
+                <option value="3dtiles_data/XaPhuong/Gia Lai/tileset.json">Xã/Phường Gia Lai</option>
+                <option value="3dtiles_data/XaPhuong/Hà Nội/tileset.json">Xã/Phường Hà Nội</option>
+                <option value="3dtiles_data/XaPhuong/Hà Tĩnh/tileset.json">Xã/Phường Hà Tĩnh</option>
+                <option value="3dtiles_data/XaPhuong/Hải Phòng/tileset.json">Xã/Phường Hải Phòng</option>
+                <option value="3dtiles_data/XaPhuong/Huế/tileset.json">Xã/Phường Huế</option>
+                <option value="3dtiles_data/XaPhuong/Hưng Yên/tileset.json">Xã/Phường Hưng Yên</option>
+                <option value="3dtiles_data/XaPhuong/Khánh Hòa/tileset.json">Xã/Phường Khánh Hòa</option>
+                <option value="3dtiles_data/XaPhuong/Lai Châu/tileset.json">Xã/Phường Lai Châu</option>
+                <option value="3dtiles_data/XaPhuong/Lâm Đồng/tileset.json">Xã/Phường Lâm Đồng</option>
+                <option value="3dtiles_data/XaPhuong/Lạng Sơn/tileset.json">Xã/Phường Lạng Sơn</option>
+                <option value="3dtiles_data/XaPhuong/Lào Cai/tileset.json">Xã/Phường Lào Cai</option>
+                <option value="3dtiles_data/XaPhuong/Nghệ An/tileset.json">Xã/Phường Nghệ An</option>
+                <option value="3dtiles_data/XaPhuong/Ninh Bình/tileset.json">Xã/Phường Ninh Bình</option>
+                <option value="3dtiles_data/XaPhuong/Phú Thọ/tileset.json">Xã/Phường Phú Thọ</option>
+                <option value="3dtiles_data/XaPhuong/Quảng Ngãi/tileset.json">Xã/Phường Quảng Ngãi</option>
+                <option value="3dtiles_data/XaPhuong/Quảng Ninh/tileset.json">Xã/Phường Quảng Ninh</option>
+                <option value="3dtiles_data/XaPhuong/Quảng Trị/tileset.json">Xã/Phường Quảng Trị</option>
+                <option value="3dtiles_data/XaPhuong/Sơn La/tileset.json">Xã/Phường Sơn La</option>
+                <option value="3dtiles_data/XaPhuong/Tây Ninh/tileset.json">Xã/Phường Tây Ninh</option>
+                <option value="3dtiles_data/XaPhuong/Thái Nguyên/tileset.json">Xã/Phường Thái Nguyên</option>
+                <option value="3dtiles_data/XaPhuong/Thanh Hóa/tileset.json">Xã/Phường Thanh Hóa</option>
+                <option value="3dtiles_data/XaPhuong/TP. Hồ Chí Minh/tileset.json">Xã/Phường TP. Hồ Chí Minh</option>
+                <option value="3dtiles_data/XaPhuong/Tuyên Quang/tileset.json">Xã/Phường Tuyên Quang</option>
+                <option value="3dtiles_data/XaPhuong/Vĩnh Long/tileset.json">Xã/Phường Vĩnh Long</option>
+            </select>
+        </div>
+
+        <div id="folderUploadSection" class="upload-section" style="display: none;">
+            <h4>📁 Tải thư mục 3D Tiles</h4>
+            <p>Chọn thư mục chứa tileset.json và tile.b3dm</p>
+            <input type="file" id="folderInput" webkitdirectory directory multiple>
+            <button id="loadFolderBtn" disabled>📂 Tải dữ liệu từ thư mục</button>
+            <div id="folderFileList" class="file-list" style="display: none;"></div>
+        </div>
+
+        <div id="zipUploadSection" class="upload-section" style="display: none;">
+            <h4>📦 Tải file ZIP</h4>
+            <p>Chọn file ZIP chứa dữ liệu 3D Tiles đã xuất</p>
+            <input type="file" id="zipInput" accept=".zip">
+            <button id="loadZipBtn" disabled>📦 Tải dữ liệu từ ZIP</button>
+            <div id="zipFileList" class="file-list" style="display: none;"></div>
+        </div>
+
+        <div id="geojsonUploadSection" class="upload-section" style="display: none;">
+            <h4>📦 Tải file GeoJSON</h4>
+            <p>Chọn file GeoJSON để hiển thị lên bản đồ</p>
+            <input type="file" id="geojsonInput" accept=".geojson,application/json">
+            <button id="loadGeojsonBtn" disabled>📦 Tải dữ liệu từ GeoJSON</button>
+            <div id="geojsonFileList" class="file-list" style="display: none;"></div>
+        </div>
+
+        <div id="uploadProgress">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">Đang xử lý...</div>
+        </div>
+
+        <button id="clearBtn">🗑️ Xóa dữ liệu hiện tại</button>
+    </div>
+
+    <div id="status">Đang khởi tạo...</div>
+
+    <script>
+        let viewer = null;
+        let currentLoadedData = null;
+        
+        // Initialize Cesium
+        function initCesium() {
+            try {
+                updateStatus('Khởi tạo Cesium...', 'info');
+                
+                Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmU1Zjc0Ny1kMTZhLTRhYmMtOGFjYi1hOWU1MjlhYmEzNmQiLCJpZCI6MzE5NTA2LCJpYXQiOjE3NTMyNDMwODB9.k4KeeDH7fAto4Orfeva9-sJuvQTLoSELhItVYsochBs';
+                
+                viewer = new Cesium.Viewer('cesiumContainer', {
+                    animation: false,
+                    baseLayerPicker: false,
+                    fullscreenButton: false,
+                    geocoder: false,
+                    homeButton: false,
+                    infoBox: true,
+                    sceneModePicker: false,
+                    selectionIndicator: true,
+                    timeline: false,
+                    navigationHelpButton: false,
+                    scene3DOnly: true
+                });
+                
+                // Simple imagery
+                viewer.imageryLayers.removeAll();
+                viewer.imageryLayers.addImageryProvider(
+                    new Cesium.OpenStreetMapImageryProvider({
+                        url: 'https://a.tile.openstreetmap.org/'
+                    })
+                );
+                
+                // Set camera to Vietnam
+                viewer.camera.setView({
+                    destination: Cesium.Cartesian3.fromDegrees(106.0, 16.0, 2000000)
+                });
+                
+                setupEventHandlers();
+                updateStatus('✅ Cesium đã sẵn sàng', 'success');
+                
+            } catch (error) {
+                updateStatus('❌ Lỗi khởi tạo: ' + error.message, 'error');
+            }
+        }
+        
+        function setupEventHandlers() {
+            const uploadSelector = document.getElementById('uploadSelector');
+            const viewSelector = document.getElementById('viewSelector');
+            const folderInput = document.getElementById('folderInput');
+            const zipInput = document.getElementById('zipInput');
+            const loadFolderBtn = document.getElementById('loadFolderBtn');
+            const loadZipBtn = document.getElementById('loadZipBtn');
+            const clearBtn = document.getElementById('clearBtn');
+            const geojsonInput = document.getElementById('geojsonInput');
+            const loadGeojsonBtn = document.getElementById('loadGeojsonBtn');
+
+            // Upload selector change
+            uploadSelector.addEventListener('change', function() {
+                const value = this.value;
+                hideAllUploadSections();
+                
+                // Reset view selector khi chọn upload
+                viewSelector.value = '';
+                
+                if (value === 'uploadFolder') {
+                    showFolderUploadSection();
+                } else if (value === 'uploadZipFile') {
+                    showZipUploadSection();
+                } else if (value === 'uploadGeojsonFile') {
+                    showGeojsonUploadSection();
+                }
+            });
+
+            // View selector change
+            viewSelector.addEventListener('change', function() {
+                const value = this.value;
+                
+                // Reset upload selector khi chọn view
+                uploadSelector.value = '';
+                hideAllUploadSections();
+                
+                if (value && value !== '') {
+                    // Load from server
+                    clearScene();
+                    drawPolygonsFromB3dm(value);
+                }
+            });
+
+            // Folder input change
+            folderInput.addEventListener('change', function() {
+                const files = Array.from(this.files);
+                loadFolderBtn.disabled = files.length === 0;
+                
+                if (files.length > 0) {
+                    displayFolderFiles(files);
+                }
+            });
+
+            // ZIP input change
+            zipInput.addEventListener('change', function() {
+                const file = this.files[0];
+                loadZipBtn.disabled = !file;
+                
+                if (file) {
+                    displayZipInfo(file);
+                }
+            });
+
+            // GeoJSON input change
+            geojsonInput.addEventListener('change', function() {
+                const file = this.files[0];
+                loadGeojsonBtn.disabled = !file;
+                
+                if (file) {
+                    displayGeojsonInfo(file);
+                }
+            });
+
+            // Load folder button
+            loadFolderBtn.addEventListener('click', function() {
+                loadDataFromFolder();
+            });
+
+            // Load ZIP button
+            loadZipBtn.addEventListener('click', function() {
+                loadDataFromZip();
+            });
+
+            // Load GeoJSON button
+            loadGeojsonBtn.addEventListener('click', function() {
+                loadDataFromGeojson();
+            });
+
+            // Clear button
+            clearBtn.addEventListener('click', function() {
+                clearScene();
+                resetUploadSections();
+            });
+
+            // Click event để hiện thông tin chi tiết
+            if (viewer) {
+                viewer.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_CLICK);
+            }
+        }
+
+        function hideAllUploadSections() {
+            document.getElementById('folderUploadSection').style.display = 'none';
+            document.getElementById('zipUploadSection').style.display = 'none';
+            document.getElementById('geojsonUploadSection').style.display = 'none';
+        }
+
+        function showFolderUploadSection() {
+            document.getElementById('folderUploadSection').style.display = 'block';
+        }
+
+        function showZipUploadSection() {
+            document.getElementById('zipUploadSection').style.display = 'block';
+        }
+
+        function showGeojsonUploadSection() {
+            document.getElementById('geojsonUploadSection').style.display = 'block';
+        }
+
+        function resetUploadSections() {
+            document.getElementById('folderInput').value = '';
+            document.getElementById('zipInput').value = '';
+            document.getElementById('geojsonInput').value = '';
+            document.getElementById('loadFolderBtn').disabled = true;
+            document.getElementById('loadZipBtn').disabled = true;
+            document.getElementById('loadGeojsonBtn').disabled = true;
+            document.getElementById('folderFileList').style.display = 'none';
+            document.getElementById('zipFileList').style.display = 'none';
+            document.getElementById('geojsonFileList').style.display = 'none';
+            document.getElementById('uploadSelector').value = '';
+            document.getElementById('viewSelector').value = '';
+            hideAllUploadSections();
+        }
+
+        function displayFolderFiles(files) {
+            const fileListEl = document.getElementById('folderFileList');
+            fileListEl.style.display = 'block';
+            fileListEl.innerHTML = '';
+
+            const tilesetFiles = files.filter(f => f.name === 'tileset.json');
+            const b3dmFiles = files.filter(f => f.name.endsWith('.b3dm'));
+            const otherFiles = files.filter(f => !f.name.endsWith('.json') && !f.name.endsWith('.b3dm'));
+
+            if (tilesetFiles.length > 0) {
+                tilesetFiles.forEach(file => {
+                    const item = document.createElement('div');
+                    item.className = 'file-item tileset';
+                    item.textContent = `📄 ${file.webkitRelativePath || file.name}`;
+                    fileListEl.appendChild(item);
+                });
+            }
+
+            if (b3dmFiles.length > 0) {
+                b3dmFiles.forEach(file => {
+                    const item = document.createElement('div');
+                    item.className = 'file-item b3dm';
+                    item.textContent = `📦 ${file.webkitRelativePath || file.name}`;
+                    fileListEl.appendChild(item);
+                });
+            }
+
+            if (otherFiles.length > 0) {
+                otherFiles.forEach(file => {
+                    const item = document.createElement('div');
+                    item.className = 'file-item';
+                    item.textContent = `📄 ${file.webkitRelativePath || file.name}`;
+                    fileListEl.appendChild(item);
+                });
+            }
+
+            if (tilesetFiles.length === 0 && b3dmFiles.length === 0) {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                item.style.color = '#ff6b6b';
+                item.textContent = '⚠️ Không tìm thấy tileset.json hoặc .b3dm files';
+                fileListEl.appendChild(item);
+            }
+        }
+
+        function displayZipInfo(file) {
+            const fileListEl = document.getElementById('zipFileList');
+            fileListEl.style.display = 'block';
+            fileListEl.innerHTML = `
+                <div class="file-item">📦 ${file.name}</div>
+                <div class="file-item">📊 Kích thước: ${(file.size / 1024 / 1024).toFixed(2)} MB</div>
+                <div class="file-item">🕒 ${new Date(file.lastModified).toLocaleDateString('vi-VN')}</div>
+            `;
+        }
+
+        function displayGeojsonInfo(file) {
+            const fileListEl = document.getElementById('geojsonFileList');
+            fileListEl.style.display = 'block';
+            fileListEl.innerHTML = `
+                <div class="file-item">📄 ${file.name}</div>
+                <div class="file-item">📊 Kích thước: ${(file.size / 1024 / 1024).toFixed(2)} MB</div>
+                <div class="file-item">🕒 ${new Date(file.lastModified).toLocaleDateString('vi-VN')}</div>
+            `;
+        }
+
+        async function loadDataFromFolder() {
+            try {
+                showProgress(true, 'Đang xử lý thư mục...');
+                clearScene();
+
+                const files = Array.from(document.getElementById('folderInput').files);
+                const tilesetFile = files.find(f => f.name === 'tileset.json');
+                const b3dmFile = files.find(f => f.name.endsWith('.b3dm'));
+
+                if (!tilesetFile || !b3dmFile) {
+                    throw new Error('Không tìm thấy tileset.json hoặc file .b3dm trong thư mục');
+                }
+
+                updateProgress(30, 'Đọc tileset.json...');
+                const tilesetContent = await readFileAsText(tilesetFile);
+                const tilesetData = JSON.parse(tilesetContent);
+
+                updateProgress(60, 'Đọc file B3DM...');
+                const b3dmContent = await readFileAsArrayBuffer(b3dmFile);
+
+                updateProgress(80, 'Vẽ polygons...');
+                await drawPolygonsFromB3dmData(b3dmContent, tilesetFile.webkitRelativePath || tilesetFile.name);
+
+                showProgress(false);
+                updateStatus('✅ Đã tải thành công dữ liệu từ thư mục', 'success');
+
+            } catch (error) {
+                showProgress(false);
+                updateStatus('❌ Lỗi tải thư mục: ' + error.message, 'error');
+            }
+        }
+
+        async function loadDataFromZip() {
+            try {
+                showProgress(true, 'Đang xử lý file ZIP...');
+                clearScene();
+
+                const zipFile = document.getElementById('zipInput').files[0];
+                if (!zipFile) throw new Error('Không có file ZIP được chọn');
+
+                updateProgress(20, 'Đang giải nén ZIP...');
+                const zip = new JSZip();
+                const zipData = await zip.loadAsync(zipFile);
+
+                // Tìm các file tileset và B3DM
+                const tilesetEntries = [];
+                const b3dmEntries = [];
+
+                zipData.forEach((relativePath, zipEntry) => {
+                    if (relativePath.endsWith('tileset.json')) {
+                        tilesetEntries.push({ path: relativePath, entry: zipEntry });
+                    } else if (relativePath.endsWith('.b3dm')) {
+                        b3dmEntries.push({ path: relativePath, entry: zipEntry });
+                    }
+                });
+
+                if (tilesetEntries.length === 0) {
+                    throw new Error('Không tìm thấy file tileset.json trong ZIP');
+                }
+
+                if (b3dmEntries.length === 0) {
+                    throw new Error('Không tìm thấy file .b3dm trong ZIP');
+                }
+
+                updateProgress(50, `Tìm thấy ${tilesetEntries.length} tileset(s), đang xử lý...`);
+
+                // Xử lý từng tileset
+                for (let i = 0; i < tilesetEntries.length; i++) {
+                    const tilesetEntry = tilesetEntries[i];
+                    const progress = 50 + (i / tilesetEntries.length) * 40;
+                    
+                    updateProgress(progress, `Xử lý ${tilesetEntry.path}...`);
+
+                    // Đọc tileset.json
+                    const tilesetContent = await tilesetEntry.entry.async('text');
+                    const tilesetData = JSON.parse(tilesetContent);
+
+                    // Tìm B3DM tương ứng
+                    const folderPath = tilesetEntry.path.substring(0, tilesetEntry.path.lastIndexOf('/') + 1);
+                    const expectedB3dmPath = folderPath + 'tile.b3dm';
+                    
+                    const b3dmEntry = b3dmEntries.find(entry => entry.path === expectedB3dmPath) ||
+                                    b3dmEntries.find(entry => entry.path.includes(folderPath)) ||
+                                    b3dmEntries[0]; // Fallback to first B3DM
+
+                    if (b3dmEntry) {
+                        const b3dmContent = await b3dmEntry.entry.async('arraybuffer');
+                        await drawPolygonsFromB3dmData(b3dmContent, tilesetEntry.path);
+                    }
+                }
+
+                showProgress(false);
+                updateStatus(`✅ Đã tải thành công ${tilesetEntries.length} tileset(s) từ ZIP`, 'success');
+
+            } catch (error) {
+                showProgress(false);
+                updateStatus('❌ Lỗi tải ZIP: ' + error.message, 'error');
+            }
+        }
+
+        async function loadDataFromGeojson() {
+            try {
+                showProgress(true, 'Đang xử lý file GeoJSON...');
+                clearScene();
+
+                const geojsonFile = document.getElementById('geojsonInput').files[0];
+                if (!geojsonFile) throw new Error('Không có file GeoJSON được chọn');
+
+                updateProgress(30, 'Đang đọc GeoJSON...');
+                const geojsonContent = await readFileAsText(geojsonFile);
+                const geojsonData = JSON.parse(geojsonContent);
+
+                updateProgress(60, 'Đang vẽ polygons...');
+                await drawPolygonsFromGeojsonData(geojsonData, geojsonFile.name);
+
+                showProgress(false);
+                updateStatus('✅ Đã tải thành công dữ liệu từ GeoJSON', 'success');
+            } catch (error) {
+                showProgress(false);
+                updateStatus('❌ Lỗi tải GeoJSON: ' + error.message, 'error');
+            }
+        }
+
+        async function drawPolygonsFromB3dmData(b3dmArrayBuffer, sourceName = 'Unknown') {
+            try {
+                // Parse batch table từ B3DM data
+                const batchTableData = extractBatchTableFromB3dm(b3dmArrayBuffer);
+                if (!batchTableData || batchTableData.length === 0) {
+                    updateStatus('⚠️ Không có dữ liệu batch table trong B3DM: ' + sourceName, 'warning');
+                    return;
+                }
+
+                // Vẽ polygons
+                const colors = [
+                    Cesium.Color.CRIMSON, Cesium.Color.ORANGE, Cesium.Color.GOLD,
+                    Cesium.Color.FORESTGREEN, Cesium.Color.DODGERBLUE, Cesium.Color.MEDIUMORCHID,
+                    Cesium.Color.HOTPINK, Cesium.Color.TEAL, Cesium.Color.BROWN,
+                    Cesium.Color.DARKSLATEGRAY, Cesium.Color.CORAL, Cesium.Color.LIGHTSEAGREEN,
+                    Cesium.Color.MEDIUMPURPLE, Cesium.Color.SANDYBROWN, Cesium.Color.STEELBLUE,
+                    Cesium.Color.INDIANRED, Cesium.Color.DARKKHAKI, Cesium.Color.MEDIUMSLATEBLUE,
+                    Cesium.Color.DARKGREEN, Cesium.Color.CHOCOLATE, Cesium.Color.CADETBLUE,
+                    Cesium.Color.DARKORANGE, Cesium.Color.MEDIUMVIOLETRED, Cesium.Color.OLIVEDRAB,
+                    Cesium.Color.ROYALBLUE, Cesium.Color.SIENNA, Cesium.Color.DARKTURQUOISE,
+                    Cesium.Color.FIREBRICK, Cesium.Color.MEDIUMSEAGREEN, Cesium.Color.DARKORCHID,
+                    Cesium.Color.GOLDENROD, Cesium.Color.DARKRED, Cesium.Color.DARKBLUE,
+                    Cesium.Color.DARKMAGENTA
+                ];
+
+                let count = 0;
+                let minLon = 180, minLat = 90, maxLon = -180, maxLat = -90;
+
+                for (let i = 0; i < batchTableData.length; i++) {
+                    const feature = batchTableData[i];
+                    if (!feature.geometry) continue;
+
+                    const color = colors[i % colors.length];
+                    let entity = null;
+
+                    if (feature.geometry.type === 'Polygon') {
+                        const rings = feature.geometry.coordinates;
+                        if (Array.isArray(rings) && rings.length > 0) {
+                            const coordinates = rings[0];
+                            if (coordinates.length >= 3) {
+                                coordinates.forEach(coord => {
+                                    if (coord[0] < minLon) minLon = coord[0];
+                                    if (coord[0] > maxLon) maxLon = coord[0];
+                                    if (coord[1] < minLat) minLat = coord[1];
+                                    if (coord[1] > maxLat) maxLat = coord[1];
+                                });
+
+                                const positions = coordinates.map(coord => 
+                                    Cesium.Cartesian3.fromDegrees(coord[0], coord[1]));
+
+                                entity = viewer.entities.add({
+                                    name: feature.properties?.ten_tinh || 
+                                          feature.properties?.NAME_1 || 
+                                          feature.properties?.name || 
+                                          `Feature ${i}`,
+                                    properties: feature.properties,
+                                    polygon: {
+                                        hierarchy: positions,
+                                        material: color.withAlpha(0.6),
+                                        outline: true,
+                                        outlineColor: Cesium.Color.WHITE,
+                                        outlineWidth: 2,
+                                        height: 0,
+                                        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+                                    }
+                                });
+                                count++;
+                            }
+                        }
+                    } else if (feature.geometry.type === 'MultiPolygon') {
+                        const multipolys = feature.geometry.coordinates;
+                        if (Array.isArray(multipolys) && multipolys.length > 0) {
+                            for (let m = 0; m < multipolys.length; m++) {
+                                const rings = multipolys[m];
+                                if (Array.isArray(rings) && rings.length > 0) {
+                                    const coordinates = rings[0];
+                                    if (coordinates.length >= 3) {
+                                        coordinates.forEach(coord => {
+                                            if (coord[0] < minLon) minLon = coord[0];
+                                            if (coord[0] > maxLon) maxLon = coord[0];
+                                            if (coord[1] < minLat) minLat = coord[1];
+                                            if (coord[1] > maxLat) maxLat = coord[1];
+                                        });
+
+                                        const positions = coordinates.map(coord => 
+                                            Cesium.Cartesian3.fromDegrees(coord[0], coord[1]));
+
+                                        entity = viewer.entities.add({
+                                            name: feature.properties?.ten_tinh || 
+                                                  feature.properties?.NAME_1 || 
+                                                  feature.properties?.name || 
+                                                  `Feature ${i}-${m}`,
+                                            properties: feature.properties,
+                                            polygon: {
+                                                hierarchy: positions,
+                                                material: color.withAlpha(0.6),
+                                                outline: true,
+                                                outlineColor: Cesium.Color.WHITE,
+                                                outlineWidth: 2,
+                                                height: 0,
+                                                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+                                            }
+                                        });
+                                        count++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                updateStatus(`📊 ${sourceName}: Đã vẽ ${count} polygon`, 'info');
+
+                // Fly camera to bounding box nếu có data
+                if (count > 0) {
+                    const rect = Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat);
+                    viewer.camera.flyTo({
+                        destination: rect,
+                        orientation: {
+                            heading: 0.0,
+                            pitch: -Math.PI / 2,
+                            roll: 0.0
+                        },
+                        duration: 1.5
+                    });
+                }
+
+                // Setup click event handler để hiện thông tin chi tiết
+                setupClickHandler();
+
+            } catch (error) {
+                updateStatus('❌ Lỗi vẽ polygons từ ' + sourceName + ': ' + error.message, 'error');
+            }
+        }
+
+        async function drawPolygonsFromGeojsonData(geojsonData, sourceName = 'Unknown') {
+            try {
+                if (!geojsonData || !geojsonData.features || geojsonData.features.length === 0) {
+                    updateStatus('⚠️ Không có dữ liệu features trong GeoJSON: ' + sourceName, 'warning');
+                    return;
+                }
+
+                const colors = [
+                    Cesium.Color.CRIMSON, Cesium.Color.ORANGE, Cesium.Color.GOLD,
+                    Cesium.Color.FORESTGREEN, Cesium.Color.DODGERBLUE, Cesium.Color.MEDIUMORCHID,
+                    Cesium.Color.HOTPINK, Cesium.Color.TEAL, Cesium.Color.BROWN,
+                    Cesium.Color.DARKSLATEGRAY, Cesium.Color.CORAL, Cesium.Color.LIGHTSEAGREEN,
+                    Cesium.Color.MEDIUMPURPLE, Cesium.Color.SANDYBROWN, Cesium.Color.STEELBLUE,
+                    Cesium.Color.INDIANRED, Cesium.Color.DARKKHAKI, Cesium.Color.MEDIUMSLATEBLUE,
+                    Cesium.Color.DARKGREEN, Cesium.Color.CHOCOLATE, Cesium.Color.CADETBLUE,
+                    Cesium.Color.DARKORANGE, Cesium.Color.MEDIUMVIOLETRED, Cesium.Color.OLIVEDRAB,
+                    Cesium.Color.ROYALBLUE, Cesium.Color.SIENNA, Cesium.Color.DARKTURQUOISE,
+                    Cesium.Color.FIREBRICK, Cesium.Color.MEDIUMSEAGREEN, Cesium.Color.DARKORCHID,
+                    Cesium.Color.GOLDENROD, Cesium.Color.DARKRED, Cesium.Color.DARKBLUE,
+                    Cesium.Color.DARKMAGENTA
+                ];
+
+                let count = 0;
+                let minLon = 180, minLat = 90, maxLon = -180, maxLat = -90;
+
+                for (let i = 0; i < geojsonData.features.length; i++) {
+                    const feature = geojsonData.features[i];
+                    if (!feature.geometry) continue;
+
+                    const color = colors[i % colors.length];
+                    let entity = null;
+
+                    if (feature.geometry.type === 'Polygon') {
+                        const rings = feature.geometry.coordinates;
+                        if (Array.isArray(rings) && rings.length > 0) {
+                            const coordinates = rings[0];
+                            if (coordinates.length >= 3) {
+                                coordinates.forEach(coord => {
+                                    if (coord[0] < minLon) minLon = coord[0];
+                                    if (coord[0] > maxLon) maxLon = coord[0];
+                                    if (coord[1] < minLat) minLat = coord[1];
+                                    if (coord[1] > maxLat) maxLat = coord[1];
+                                });
+
+                                const positions = coordinates.map(coord => 
+                                    Cesium.Cartesian3.fromDegrees(coord[0], coord[1]));
+
+                                entity = viewer.entities.add({
+                                    name: feature.properties?.ten_tinh || 
+                                          feature.properties?.NAME_1 || 
+                                          feature.properties?.name || 
+                                          `Feature ${i}`,
+                                    properties: feature.properties,
+                                    polygon: {
+                                        hierarchy: positions,
+                                        material: color.withAlpha(0.6),
+                                        outline: true,
+                                        outlineColor: Cesium.Color.WHITE,
+                                        outlineWidth: 2,
+                                        height: 0,
+                                        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+                                    }
+                                });
+                                count++;
+                            }
+                        }
+                    } else if (feature.geometry.type === 'MultiPolygon') {
+                        const multipolys = feature.geometry.coordinates;
+                        if (Array.isArray(multipolys) && multipolys.length > 0) {
+                            for (let m = 0; m < multipolys.length; m++) {
+                                const rings = multipolys[m];
+                                if (Array.isArray(rings) && rings.length > 0) {
+                                    const coordinates = rings[0];
+                                    if (coordinates.length >= 3) {
+                                        coordinates.forEach(coord => {
+                                            if (coord[0] < minLon) minLon = coord[0];
+                                            if (coord[0] > maxLon) maxLon = coord[0];
+                                            if (coord[1] < minLat) minLat = coord[1];
+                                            if (coord[1] > maxLat) maxLat = coord[1];
+                                        });
+
+                                        const positions = coordinates.map(coord => 
+                                            Cesium.Cartesian3.fromDegrees(coord[0], coord[1]));
+
+                                        entity = viewer.entities.add({
+                                            name: feature.properties?.ten_tinh || 
+                                                  feature.properties?.NAME_1 || 
+                                                  feature.properties?.name || 
+                                                  `Feature ${i}-${m}`,
+                                            properties: feature.properties,
+                                            polygon: {
+                                                hierarchy: positions,
+                                                material: color.withAlpha(0.6),
+                                                outline: true,
+                                                outlineColor: Cesium.Color.WHITE,
+                                                outlineWidth: 2,
+                                                height: 0,
+                                                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+                                            }
+                                        });
+                                        count++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                updateStatus(`📊 ${sourceName}: Đã vẽ ${count} polygon`, 'info');
+
+                // Fly camera to bounding box nếu có data
+                if (count > 0) {
+                    const rect = Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat);
+                    viewer.camera.flyTo({
+                        destination: rect,
+                        orientation: {
+                            heading: 0.0,
+                            pitch: -Math.PI / 2,
+                            roll: 0.0
+                        },
+                        duration: 1.5
+                    });
+                }
+
+                // Setup click event handler để hiện thông tin chi tiết
+                setupClickHandler();
+
+            } catch (error) {
+                updateStatus('❌ Lỗi vẽ polygons từ GeoJSON ' + sourceName + ': ' + error.message, 'error');
+            }
+        }
+
+        function setupClickHandler() {
+            if (viewer && viewer.screenSpaceEventHandler) {
+                viewer.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_CLICK);
+                viewer.screenSpaceEventHandler.setInputAction(function onLeftClick(movement) {
+                    const pickedObject = viewer.scene.pick(movement.position);
+                    if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.properties) {
+                        const props = pickedObject.id.properties;
+                        let html = '<b>🗺️ Thông tin vùng:</b><br><table style="color:white; width: 100%;">';
+                        
+                        for (const key in props) {
+                            if (Object.prototype.hasOwnProperty.call(props, key) &&
+                                !key.includes('Subscription') &&
+                                !key.includes('_propertyNames') &&
+                                !key.includes('_definitionChanged')) {
+                                const value = props[key];
+                                if (value !== null && value !== undefined) {
+                                    html += `<tr><td style='font-weight:bold; padding: 2px 8px 2px 0;'>${key}:</td><td style='padding: 2px 0;'>${value}</td></tr>`;
+                                }
+                            }
+                        }
+                        html += '</table>';
+                        showFeatureDetails(html);
+                    } else {
+                        showFeatureDetails('');
+                    }
+                }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+            }
+        }
+
+        function showProgress(show, text = '') {
+            const progressEl = document.getElementById('uploadProgress');
+            progressEl.style.display = show ? 'block' : 'none';
+            if (show && text) {
+                document.getElementById('progressText').textContent = text;
+            }
+        }
+
+        function updateProgress(percent, text) {
+            document.getElementById('progressFill').style.width = percent + '%';
+            document.getElementById('progressText').textContent = text;
+        }
+
+        async function readFileAsText(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = () => reject(new Error('Không thể đọc file text'));
+                reader.readAsText(file, 'utf-8');
+            });
+        }
+
+        async function readFileAsArrayBuffer(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = () => reject(new Error('Không thể đọc file binary'));
+                reader.readAsArrayBuffer(file);
+            });
+        }
+        
+        function updateStatus(message, type = 'info') {
+            const statusEl = document.getElementById('status');
+            const timestamp = new Date().toLocaleTimeString('vi-VN');
+            const colorClass = type || 'info';
+            statusEl.innerHTML = `<span class="${colorClass}">[${timestamp}] ${message}</span>`;
+            console.log(`[${timestamp}] ${message}`);
+        }
+        
+        async function getTilesetURI(tilesetPath) {
+            try {
+                if (!tilesetPath) {
+                    console.error('❌ Không có tileset path được chọn');
+                    return null;
+                }
+                
+                // Fetch tileset.json
+                const response = await fetch(tilesetPath);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
+                }
+                
+                const tilesetData = await response.json();
+                
+                // Lấy URI từ root content
+                const uri = tilesetData?.root?.content?.uri;
+                
+                if (uri) {
+                    // Tạo full URL cho content
+                    const baseURL = tilesetPath.substring(0, tilesetPath.lastIndexOf('/') + 1);
+                    const fullContentURL = baseURL + uri;
+                    
+                    return fullContentURL;
+                    
+                } else {
+                    console.warn('⚠️ Không tìm thấy URI trong tileset.json');
+                    console.log('📄 Tileset structure:', tilesetData);
+                    return null;
+                }
+                
+            } catch (error) {
+                console.error('❌ Lỗi đọc tileset:', error);
+                return null;
+            }
+        }
+        
+        async function drawPolygonsFromB3dm(tilesetPath) {
+            try {
+                updateStatus('Đang tải dữ liệu từ server...', 'info');
+                console.log('Tileset url:', tilesetPath);
+
+                const uri = await getTilesetURI(tilesetPath);
+                if (!uri) {
+                    updateStatus('❌ Không thể lấy URI từ tileset', 'error');
+                    return;
+                }
+
+                console.log('Tileset uri:', uri);
+
+                const b3dmResponse = await fetch(uri);
+                if (!b3dmResponse.ok) {
+                    updateStatus('❌ Không thể tải tile.b3dm từ server', 'error');
+                    return;
+                }
+                
+                const arrayBuffer = await b3dmResponse.arrayBuffer();
+                await drawPolygonsFromB3dmData(arrayBuffer, tilesetPath);
+
+            } catch (error) {
+                updateStatus('❌ Lỗi tải từ server: ' + error.message, 'error');
+            }
+        }
+        
+        function extractBatchTableFromB3dm(arrayBuffer) {
+            try {
+                const dataView = new DataView(arrayBuffer);
+                
+                // Read B3DM header
+                const magic = String.fromCharCode(
+                    dataView.getUint8(0), dataView.getUint8(1),
+                    dataView.getUint8(2), dataView.getUint8(3)
+                );
+                
+                if (magic !== 'b3dm') {
+                    console.error('❌ File không phải định dạng B3DM');
+                    return null;
+                }
+                
+                const featureTableJSONByteLength = dataView.getUint32(12, true);
+                const featureTableBinaryByteLength = dataView.getUint32(16, true);
+                const batchTableJSONByteLength = dataView.getUint32(20, true);
+                const batchTableBinaryByteLength = dataView.getUint32(24, true);
+                
+                if (batchTableJSONByteLength === 0) {
+                    console.warn('⚠️ Không có batch table trong B3DM');
+                    return null;
+                }
+                
+                const batchTableOffset = 28 + featureTableJSONByteLength + featureTableBinaryByteLength;
+                const batchTableBytes = new Uint8Array(arrayBuffer, batchTableOffset, batchTableJSONByteLength);
+                const batchTableString = new TextDecoder().decode(batchTableBytes);
+                const batchTable = JSON.parse(batchTableString);
+                
+                const keys = Object.keys(batchTable);
+                const featureCount = keys.length > 0 ? batchTable[keys[0]].length : 0;
+                
+                const features = [];
+                for (let i = 0; i < featureCount; i++) {
+                    const feature = { properties: {}, geometry: null };
+                    
+                    for (const [key, values] of Object.entries(batchTable)) {
+                        if (key === 'geometry' && values[i]) {
+                            try {
+                                feature.geometry = typeof values[i] === 'string' ? 
+                                    JSON.parse(values[i]) : values[i];
+                            } catch (e) {
+                                console.warn(`⚠️ Lỗi parse geometry cho feature ${i}:`, e);
+                            }
+                        } else {
+                            feature.properties[key] = values[i];
+                        }
+                    }
+                    
+                    features.push(feature);
+                }
+                
+                console.log(`📊 Extracted ${features.length} features từ batch table`);
+                return features;
+                
+            } catch (error) {
+                console.error('❌ Lỗi extract batch table:', error);
+                return null;
+            }
+        }
+        
+        function clearScene() {
+            if (viewer) {
+                viewer.entities.removeAll();
+            }
+            showFeatureDetails('');
+            currentLoadedData = null;
+        }
+
+        // Hiện thông tin chi tiết vùng
+        function showFeatureDetails(html) {
+            let panel = document.getElementById('featureDetails');
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.id = 'featureDetails';
+                panel.className = 'feature-details-panel';
+                document.body.appendChild(panel);
+            }
+            
+            if (html && html.trim()) {
+                panel.innerHTML = html;
+                panel.style.display = 'block';
+            } else {
+                panel.innerHTML = '';
+                panel.style.display = 'none';
+            }
+        }
+        
+        // Initialize when ready
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(() => {
+                if (typeof Cesium !== 'undefined') {
+                    initCesium();
+                } else {
+                    updateStatus('❌ Cesium không load được', 'error');
+                }
+            }, 500);
+        });
+    </script>
+</body>
+</html>

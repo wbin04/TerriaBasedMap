@@ -51,7 +51,6 @@
     window.moveDatasetUp = window.moveDatasetUp || function(index) { try { if (window.backendDatasets) window.backendDatasets.moveDataset(index, index+1); if (window.renderDatasetList) window.renderDatasetList(); } catch(e){} };
     window.moveDatasetDown = window.moveDatasetDown || function(index) { try { if (window.backendDatasets) window.backendDatasets.moveDataset(index, index-1); if (window.renderDatasetList) window.renderDatasetList(); } catch(e){} };
 
-    // compare-related
-    window.toggleCompareMode = window.toggleCompareMode || function() { try { if (window.toggleCompareMode) window.toggleCompareMode(); } catch(e){} };
-    window.setDatasetSide = window.setDatasetSide || function(datasetId, side) { try { if (window.setDatasetSide) window.setDatasetSide(datasetId, side); } catch(e){} };
+    // compare-related - these are defined in compare.js and backend.js, compat just ensures they exist
+    // Do NOT define fallback implementations here to avoid recursion issues
 })();

@@ -14,7 +14,7 @@ window.addEventListener('unhandledrejection', function(evt) {
 let viewer = null;
 
 // Initialize main viewer after DOM is loaded
-function initializeMainViewer() {
+async function initializeMainViewer() {
     // If a viewer was already created (by viewer.js) prefer that one.
     if (viewer) return;
     try {
@@ -34,7 +34,6 @@ function initializeMainViewer() {
     const cesiumContainer = document.getElementById('cesiumContainer');
     if (!cesiumContainer) { console.error('cesiumContainer not found in DOM'); return; }
     viewer = new Cesium.Viewer('cesiumContainer', {
-        terrainProvider: Cesium.CesiumTerrainProvider(),
         baseLayerPicker: true, geocoder: true, homeButton: true, sceneModePicker: true,
         navigationHelpButton: true, animation: false, timeline: false, fullscreenButton: true,
         vrButton: false, selectionIndicator: false, infoBox: false,
@@ -49,35 +48,8 @@ function initializeMainViewer() {
 let datasets = [];
 let selectedEntity = null;
 let originalEntityAppearance = null;
-let compareMode = false;
-let leftDatasets = new Set();
-let rightDatasets = new Set();
-let leftBaseLayer = null;
-let rightBaseLayer = null;
 
-// Dual-viewer compare mode variables (from backend_new.js)
-let leftViewer = null;
-let rightViewer = null;
-let bothViewer = null;
-let syncingCamera = false;
-let compareSliderInitialized = false;
-
-// Cleanup overlay viewers before page unload to prevent appendChild errors on refresh
-window.addEventListener('beforeunload', function() {
-    try {
-        if (leftViewer && !leftViewer.isDestroyed()) {
-            leftViewer.destroy();
-            leftViewer = null;
-        }
-    } catch (e) { console.warn('Error destroying leftViewer:', e); }
-    try {
-        if (rightViewer && !rightViewer.isDestroyed()) {
-            rightViewer.destroy();
-            rightViewer = null;
-        }
-    } catch (e) { console.warn('Error destroying rightViewer:', e); }
-    try { if (bothViewer && !bothViewer.isDestroyed()) { bothViewer.destroy(); bothViewer = null; } } catch (e) { console.warn('Error destroying bothViewer:', e); }
-});
+// Compare mode variables removed - now handled by compare.js module
 
 async function loadDatasetsFromAPI(initialLoad = true) {
     try {
@@ -133,9 +105,9 @@ async function loadDatasetsFromAPI(initialLoad = true) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     // Initialize main viewer first
-    initializeMainViewer();
+    await initializeMainViewer();
     
     // Initialize click handler
     initializeClickHandler();
@@ -144,7 +116,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeUIEventListeners();
     
     // Then load datasets
-    loadDatasetsFromAPI();
+    await loadDatasetsFromAPI();
     // Ensure compare button positioned correctly initially
     try { updateCompareButtonPosition(); } catch (e) { /* ignore */ }
 });
@@ -253,8 +225,8 @@ async function uploadFile(file) {
     const result = await response.json();
     // Load file content and add to viewer
     await loadFileFromServer(result.dataset.id, result.dataset.name);
-    // Refresh dataset list without clearing server datasets (not initial load)
-    await loadDatasetsFromAPI(false);
+    // Don't call loadDatasetsFromAPI - it would create duplicate entries
+    // loadFileFromServer already calls addDatasetToViewer which updates the list
     } catch (error) {
         console.error('Upload error:', error);
         alert('Upload failed: ' + error.message);
@@ -459,18 +431,27 @@ function renderDatasetList() {
                 }).join('')}</div>`;
         }
         
-        // Compare mode buttons
+        // Compare mode buttons (check if compare mode is available from compare.js module)
         let compareButtonsHtml = '';
-        if (compareMode) {
-            const isLeft = leftDatasets.has(dataset.id);
-            const isRight = rightDatasets.has(dataset.id);
-            const isBoth = isLeft && isRight;
-            compareButtonsHtml = `
-                <div class="compare-controls">
-                    <button class="compare-btn ${isLeft && !isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'left')" title="Show on left">L</button>
-                    <button class="compare-btn ${isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'both')" title="Show on both">B</button>
-                    <button class="compare-btn ${isRight && !isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'right')" title="Show on right">R</button>
-                </div>`;
+        try {
+            // Check if compare mode exists (from compare.js or global scope)
+            const hasCompareMode = window.backendCompare || window.toggleCompareMode;
+            if (hasCompareMode) {
+                // Try to get compare state from window (compare.js may expose these)
+                const leftDatasets = window.leftDatasets || new Set();
+                const rightDatasets = window.rightDatasets || new Set();
+                const isLeft = leftDatasets.has(dataset.id);
+                const isRight = rightDatasets.has(dataset.id);
+                const isBoth = isLeft && isRight;
+                compareButtonsHtml = `
+                    <div class="compare-controls">
+                        <button class="compare-btn ${isLeft && !isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'left')" title="Show on left">L</button>
+                        <button class="compare-btn ${isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'both')" title="Show on both">B</button>
+                        <button class="compare-btn ${isRight && !isBoth ? 'active' : ''}" onclick="setDatasetSideSafe('${dataset.id}', 'right')" title="Show on right">R</button>
+                    </div>`;
+            }
+        } catch (e) {
+            // Ignore if compare mode not available
         }
         
         const canMoveUp = displayIndex > 0;
@@ -522,6 +503,12 @@ async function toggleDataset(id, source, checked) {
         }
     }
     dataset.visible = checked;
+    
+    console.log(`toggleDataset: id=${id}, checked=${checked}, type=${dataset.type}`);
+    console.log(`  - has dataSource: ${!!dataset.dataSource}`);
+    console.log(`  - has tilesets: ${!!(dataset.tilesets && dataset.tilesets.length)}`);
+    console.log(`  - compare mode: ${!!window.compareMode}`);
+    
     if (id === 'DVHC') {
         if (checked) {
             switchToAdminMode();
@@ -530,12 +517,117 @@ async function toggleDataset(id, source, checked) {
         }
         return;
     }
-    if (dataset.dataSource) {
-        dataset.dataSource.show = checked;
+    
+    // Handle HATANG toggle
+    if (id === 'HATANG' && window.toggleHatangVisibility) {
+        window.toggleHatangVisibility(checked);
+        return;
     }
-    if (dataset.model) {
-        dataset.model.show = checked;
+    
+    // Handle different dataset types based on compare mode
+    const inCompareMode = window.compareMode === true;
+    const compareSets = inCompareMode && window.getCompareModeDatasets ? window.getCompareModeDatasets() : null;
+    const isInLeft = compareSets && compareSets.leftDatasets.has(dataset.id);
+    const isInRight = compareSets && compareSets.rightDatasets.has(dataset.id);
+    
+    console.log(`  - isInLeft: ${isInLeft}, isInRight: ${isInRight}`);
+    
+    if (inCompareMode && (isInLeft || isInRight)) {
+        // In compare mode: update compare viewer clones/tilesets
+        if (dataset.dataSource) {
+            // Original dataSource should be hidden in compare mode
+            dataset.dataSource.show = false;
+        }
+        if (dataset.tilesets && Array.isArray(dataset.tilesets)) {
+            // Original tilesets should be hidden in compare mode
+            dataset.tilesets.forEach(tileset => {
+                if (tileset) tileset.show = false;
+            });
+        }
+        
+        // Update left viewer
+        if (isInLeft) {
+            if (dataset._leftClone) {
+                dataset._leftClone.show = checked;
+                console.log(`    Updated _leftClone.show = ${checked}`);
+            }
+            if (dataset._leftTilesets && Array.isArray(dataset._leftTilesets)) {
+                dataset._leftTilesets.forEach((tileset, idx) => {
+                    if (tileset) {
+                        tileset.show = checked;
+                        console.log(`    Updated _leftTilesets[${idx}].show = ${checked}`);
+                    }
+                });
+            }
+        }
+        
+        // Update right viewer
+        if (isInRight) {
+            if (dataset._rightClone) {
+                dataset._rightClone.show = checked;
+                console.log(`    Updated _rightClone.show = ${checked}`);
+            }
+            if (dataset._rightTilesets && Array.isArray(dataset._rightTilesets)) {
+                dataset._rightTilesets.forEach((tileset, idx) => {
+                    if (tileset) {
+                        tileset.show = checked;
+                        console.log(`    Updated _rightTilesets[${idx}].show = ${checked}`);
+                    }
+                });
+            }
+        }
+    } else {
+        // Normal mode or not assigned to compare: update original datasets
+        
+        // If toggling ON and dataset has no dataSource yet, auto-load it (for file uploads)
+        if (checked && !dataset.dataSource && !dataset.tilesets && !dataset.model && source === 'backend') {
+            console.log(`    Auto-loading dataset ${id} from server...`);
+            // Load asynchronously, don't wait
+            loadFileFromServer(id, dataset.name).then(() => {
+                console.log(`    Dataset ${id} loaded successfully`);
+                viewer.scene.requestRender();
+            }).catch(err => {
+                console.error(`    Failed to auto-load dataset ${id}:`, err);
+            });
+            return; // Exit early, the load will handle visibility
+        }
+        
+        // If toggling OFF and dataSource exists, remove it from viewer
+        if (!checked && dataset.dataSource) {
+            try {
+                if (viewer.dataSources.contains(dataset.dataSource)) {
+                    viewer.dataSources.remove(dataset.dataSource, false);
+                    console.log(`    Removed dataSource from viewer`);
+                }
+            } catch(e) {
+                console.error(`    Failed to remove dataSource:`, e);
+            }
+        }
+        
+        // Update visibility for existing datasets
+        if (dataset.dataSource) {
+            dataset.dataSource.show = checked;
+            // Also ensure it's added to viewer if showing
+            if (checked && !viewer.dataSources.contains(dataset.dataSource)) {
+                viewer.dataSources.add(dataset.dataSource);
+                console.log(`    Added dataSource to viewer`);
+            }
+            console.log(`    Updated dataSource.show = ${checked}`);
+        }
+        if (dataset.model) {
+            dataset.model.show = checked;
+            console.log(`    Updated model.show = ${checked}`);
+        }
+        if (dataset.tilesets && Array.isArray(dataset.tilesets)) {
+            dataset.tilesets.forEach((tileset, idx) => {
+                if (tileset) {
+                    tileset.show = checked;
+                    console.log(`    Updated tilesets[${idx}].show = ${checked}`);
+                }
+            });
+        }
     }
+    
     viewer.scene.requestRender();
 }
 
@@ -590,6 +682,15 @@ async function toggleLayer(datasetId, source, layerIdx) {
         dataset.layers[layerIdx].visible = visible;
     }
     
+    // Handle TREES special case (3D Tiles)
+    if (datasetId === 'TREES') {
+        const layer = dataset.layers[layerIdx];
+        if (layer && layer.districtId && window.toggleTreeDistrict) {
+            window.toggleTreeDistrict(layer.districtId, visible);
+        }
+        return;
+    }
+    
     // Update DataSource entities for backend datasets
     if (source === 'backend' && dataset.dataSource) {
         const layerName = typeof dataset.layers[layerIdx] === 'object' ? dataset.layers[layerIdx].name : dataset.layers[layerIdx];
@@ -609,6 +710,18 @@ async function toggleLayer(datasetId, source, layerIdx) {
 }
 
 async function deleteDataset(id, source) {
+    // Handle TREES special case
+    if (id === 'TREES' && window.clearTreeData) {
+        window.clearTreeData();
+        return;
+    }
+    
+    // Handle HATANG special case
+    if (id === 'HATANG' && window.clearHatangData) {
+        window.clearHatangData();
+        return;
+    }
+    
     // Prefer module implementation when available
     try {
         if (window.backendDatasets && typeof window.backendDatasets.deleteDataset === 'function') {
@@ -1000,6 +1113,7 @@ let currentMode = 'normal';
 let filterCategory = null;
 let debounceTimer = null;
 const MOVE_DELAY = 50;
+let cameraListenerAdded = false; // Track if listener is already added
 
 function onCameraMove() {
     if (currentMode !== 'admin') return;
@@ -1054,10 +1168,16 @@ async function switchToAdminMode() {
         }
     });
     
+    // Add DVHC DataSource to viewer BEFORE loading data to avoid triggering events
+    if (!viewer.dataSources.contains(dvhcDataset.dataSource)) {
+        console.log('Adding DVHC DataSource to viewer');
+        viewer.dataSources.add(dvhcDataset.dataSource);
+    }
+    
     await loadModelsForViewport();
     
-    // Update z-order after loading DVHC data
-    updateDataSourceZOrder();
+    // Don't call updateDataSourceZOrder here - it removes and re-adds DataSources, triggering camera events
+    // The z-order is already correct from the add sequence above
     
     await new Promise(resolve => setTimeout(resolve, 100));
     const entities = dvhcDataset.dataSource.entities.values;
@@ -1067,7 +1187,13 @@ async function switchToAdminMode() {
             console.error('FlyTo failed:', error);
         });
     }
-    viewer.camera.moveEnd.addEventListener(onCameraMove);
+    
+    // Only add camera listener if not already added
+    if (!cameraListenerAdded) {
+        viewer.camera.moveEnd.addEventListener(onCameraMove);
+        cameraListenerAdded = true;
+        console.log('Camera moveEnd listener added');
+    }
 }
 
 function switchToNormalMode() {
@@ -1078,7 +1204,13 @@ function switchToNormalMode() {
         clearTimeout(debounceTimer);
         debounceTimer = null;
     }
-    viewer.camera.moveEnd.removeEventListener(onCameraMove);
+    
+    // Remove camera listener
+    if (cameraListenerAdded) {
+        viewer.camera.moveEnd.removeEventListener(onCameraMove);
+        cameraListenerAdded = false;
+        console.log('Camera moveEnd listener removed');
+    }
     
     // Clear DVHC DataSource instead of viewer.entities
     const dvhcDataset = datasets.find(d => d.id === 'DVHC');
@@ -1152,11 +1284,14 @@ async function loadModelsForViewport() {
     // Ensure newly-created entities respect the dataset's opacity
     applyDatasetOpacityToEntities(dvhcDataset);
         
-        // DataSource z-order is managed by updateDataSourceZOrder() - don't touch it here
-        // Just make sure it's added if this is the first time
+        // Make sure DataSource is in viewer (but don't call updateDataSourceZOrder to avoid triggering camera events)
         if (!viewer.dataSources.contains(dvhcDataset.dataSource)) {
-            console.log('DVHC DataSource not in viewer, calling updateDataSourceZOrder to add it properly');
-            updateDataSourceZOrder();
+            console.log('DVHC DataSource not in viewer, adding it now');
+            try {
+                viewer.dataSources.add(dvhcDataset.dataSource);
+            } catch (e) {
+                console.error('Failed to add DVHC DataSource:', e);
+            }
         }
         
         viewer.scene.requestRender();
@@ -1216,8 +1351,9 @@ function drawGeometryDirectly(geometry, area, index, dataSource) {
                     outline: true,
                     outlineColor: color,
                     outlineWidth: 1,
-                    // Add z-index hint to help with ordering
-                    classificationType: Cesium.ClassificationType.TERRAIN
+                    // Add z-index hint to help with ordering (lower value = render first/underneath)
+                    classificationType: Cesium.ClassificationType.TERRAIN,
+                    zIndex: -1000  // Negative value ensures DVHC renders below 3D Tiles
                 }
             });
         }
@@ -1347,600 +1483,34 @@ function changeLayerColor(datasetId, source, layerIdx, color) {
         }
     }
 }
-        // Camera synchronization (from backend_new.js)
-        function syncCamera(source, targets) {
-            if (syncingCamera) return;
-            syncingCamera = true;
 
-            const pos = source.camera.position.clone();
-            const dir = source.camera.direction.clone();
-            const up = source.camera.up.clone();
-
-            targets.forEach(target => {
-                if (target && target !== source) {
-                    target.camera.setView({ destination: pos, orientation: { direction: dir, up: up } });
-                }
-            });
-
-            setTimeout(() => syncingCamera = false, 50);
-        }
-
-        // Copy imagery/base layers from one viewer to another preserving order and basic properties
-        function syncImageryLayers(srcViewer, dstViewer) {
-            try {
-                if (!srcViewer || !dstViewer) return;
-                const src = srcViewer.imageryLayers;
-                const dst = dstViewer.imageryLayers;
-                // Remove default layers from destination
-                try { dst.removeAll(); } catch (e) { /* ignore */ }
-                for (let i = 0; i < src.length; i++) {
-                    try {
-                        const srcLayer = src.get(i);
-                        // Add imagery provider to destination in the same order
-                        const provider = srcLayer && srcLayer.imageryProvider ? srcLayer.imageryProvider : null;
-                        if (!provider) continue;
-                        const newLayer = dst.addImageryProvider(provider);
-                        // Copy basic display properties
-                        if (typeof srcLayer.show !== 'undefined') newLayer.show = srcLayer.show;
-                        if (typeof srcLayer.alpha !== 'undefined') newLayer.alpha = srcLayer.alpha;
-                        if (typeof srcLayer.brightness !== 'undefined') newLayer.brightness = srcLayer.brightness;
-                        if (typeof srcLayer.contrast !== 'undefined') newLayer.contrast = srcLayer.contrast;
-                    } catch (e) {
-                        console.warn('syncImageryLayers: failed to copy a layer', e);
-                    }
-                }
-            } catch (e) {
-                console.warn('syncImageryLayers failed:', e);
-            }
-        }
-
-        // Ensure overlay viewer DataSource stacking follows the `datasets` array order
-        function syncOverlayDataSourceOrder(overlayViewer) {
-            try {
-                if (!overlayViewer) return;
-                const dsList = [];
-                for (let i = 0; i < datasets.length; i++) {
-                    const dataset = datasets[i];
-                    // prefer clones for overlays when present
-                    let candidate = null;
-                    if (overlayViewer === leftViewer) {
-                        if (dataset._leftClone && overlayViewer.dataSources.contains(dataset._leftClone)) candidate = dataset._leftClone;
-                        else if (dataset.dataSource && overlayViewer.dataSources.contains(dataset.dataSource)) candidate = dataset.dataSource;
-                    } else if (overlayViewer === rightViewer) {
-                        if (dataset._rightClone && overlayViewer.dataSources.contains(dataset._rightClone)) candidate = dataset._rightClone;
-                        else if (dataset.dataSource && overlayViewer.dataSources.contains(dataset.dataSource)) candidate = dataset.dataSource;
-                    } else {
-                        // generic fallback
-                        if (dataset._leftClone && overlayViewer.dataSources.contains(dataset._leftClone)) candidate = dataset._leftClone;
-                        else if (dataset._rightClone && overlayViewer.dataSources.contains(dataset._rightClone)) candidate = dataset._rightClone;
-                        else if (dataset.dataSource && overlayViewer.dataSources.contains(dataset.dataSource)) candidate = dataset.dataSource;
-                    }
-                    if (candidate) dsList.push(candidate);
-                }
-
-                // Remove then re-add in the correct order to set stacking.
-                // Cesium renders dataSources in reverse order, so add from last-to-first
-                for (const ds of dsList) {
-                    try { if (overlayViewer.dataSources.contains(ds)) overlayViewer.dataSources.remove(ds, false); } catch (e) {}
-                }
-                for (let i = dsList.length - 1; i >= 0; i--) {
-                    const ds = dsList[i];
-                    try { overlayViewer.dataSources.add(ds); } catch (e) { console.warn('syncOverlayDataSourceOrder: add failed', e); }
-                }
-            } catch (e) {
-                console.warn('syncOverlayDataSourceOrder failed:', e);
-            }
-        }
-
-        // Ensure compare DOM containers exist before creating viewers
-        function ensureCompareDOM() {
-            const mainContainer = document.getElementById('cesiumContainer');
-            if (!mainContainer) return null;
-            const parent = mainContainer.parentElement || document.body;
-            let viewerContainer = document.getElementById('viewerContainer');
-            if (!viewerContainer) {
-                viewerContainer = document.createElement('div');
-                viewerContainer.id = 'viewerContainer';
-                // Insert overlay container after mainContainer
-                parent.insertBefore(viewerContainer, mainContainer.nextSibling);
-                // Default overlay styles so it covers the map area
-                viewerContainer.style.position = 'absolute';
-                viewerContainer.style.top = '0';
-                viewerContainer.style.left = '0';
-                viewerContainer.style.width = '100%';
-                viewerContainer.style.height = '100vh';
-                viewerContainer.style.zIndex = '997';
-                // Start hidden and non-interactive to avoid blocking normal map interactions
-                viewerContainer.style.display = 'none';
-                viewerContainer.style.pointerEvents = 'none';
-            }
-
-            let leftContainer = document.getElementById('leftContainer');
-            if (!leftContainer) {
-                leftContainer = document.createElement('div');
-                leftContainer.id = 'leftContainer';
-                viewerContainer.appendChild(leftContainer);
-                // Make containers overlay and fill
-                leftContainer.style.position = 'absolute';
-                leftContainer.style.top = '0';
-                leftContainer.style.left = '0';
-                leftContainer.style.width = '100%';
-                leftContainer.style.height = '100%';
-                leftContainer.style.zIndex = '999';
-                // Keep non-interactive until compare mode is enabled
-                leftContainer.style.pointerEvents = 'none';
-                leftContainer.style.overflow = 'hidden';
-            }
-
-            let rightContainer = document.getElementById('rightContainer');
-            if (!rightContainer) {
-                rightContainer = document.createElement('div');
-                rightContainer.id = 'rightContainer';
-                viewerContainer.appendChild(rightContainer);
-                rightContainer.style.position = 'absolute';
-                rightContainer.style.top = '0';
-                rightContainer.style.left = '0';
-                rightContainer.style.width = '100%';
-                rightContainer.style.height = '100%';
-                rightContainer.style.zIndex = '998';
-                rightContainer.style.pointerEvents = 'none';
-                rightContainer.style.overflow = 'hidden';
-            }
-
-            let leftViewerDiv = document.getElementById('leftViewer');
-            if (!leftViewerDiv) {
-                leftViewerDiv = document.createElement('div');
-                leftViewerDiv.id = 'leftViewer';
-                leftContainer.appendChild(leftViewerDiv);
-                leftViewerDiv.style.width = '100%';
-                leftViewerDiv.style.height = '100%';
-            }
-
-            let rightViewerDiv = document.getElementById('rightViewer');
-            if (!rightViewerDiv) {
-                rightViewerDiv = document.createElement('div');
-                rightViewerDiv.id = 'rightViewer';
-                rightContainer.appendChild(rightViewerDiv);
-                rightViewerDiv.style.width = '100%';
-                rightViewerDiv.style.height = '100%';
-            }
-
-            // Both viewer (full-screen, not clipped by slider) sits below left/right overlays
-            let bothContainer = document.getElementById('bothContainer');
-            if (!bothContainer) {
-                bothContainer = document.createElement('div');
-                bothContainer.id = 'bothContainer';
-                // Insert between viewerContainer and overlay children so it's above the main viewer but below overlays
-                viewerContainer.insertBefore(bothContainer, viewerContainer.firstChild);
-                bothContainer.style.position = 'absolute';
-                bothContainer.style.top = '0';
-                bothContainer.style.left = '0';
-                bothContainer.style.width = '100%';
-                bothContainer.style.height = '100%';
-                bothContainer.style.zIndex = '996';
-                bothContainer.style.pointerEvents = 'none';
-                bothContainer.style.overflow = 'hidden';
-            }
-
-            let bothViewerDiv = document.getElementById('bothViewer');
-            if (!bothViewerDiv) {
-                bothViewerDiv = document.createElement('div');
-                bothViewerDiv.id = 'bothViewer';
-                bothContainer.appendChild(bothViewerDiv);
-                bothViewerDiv.style.width = '100%';
-                bothViewerDiv.style.height = '100%';
-            }
-
-            let slider = document.getElementById('compareSlider');
-            if (!slider) {
-                slider = document.createElement('div');
-                slider.id = 'compareSlider';
-                const handle = document.createElement('div');
-                handle.id = 'compareHandle';
-                slider.appendChild(handle);
-                viewerContainer.appendChild(slider);
-                // ensure slider overlays
-                slider.style.position = 'absolute';
-                slider.style.top = '0';
-                slider.style.left = '50%';
-                slider.style.height = '100%';
-                slider.style.zIndex = '1000';
-                slider.style.display = 'none';
-                slider.style.pointerEvents = 'auto';
-                handle.style.pointerEvents = 'auto';
-            }
-
-            return { viewerContainer, leftContainer, rightContainer, bothViewerDiv, leftViewerDiv, rightViewerDiv, slider };
-        }
-
-        function toggleCompareMode() {
-            compareMode = !compareMode;
-            const btn = document.getElementById('compareModeBtn');
-            const mainContainer = document.getElementById('cesiumContainer');
-
-            // Acquire DOM references. When enabling compare we will create DOM if missing;
-            // when disabling we prefer to only read existing elements so we don't accidentally create new ones.
-            let dom = null;
-            if (compareMode) {
-                dom = ensureCompareDOM();
-                if (!dom) {
-                    console.error('Compare mode: cesiumContainer missing, cannot enable compare');
-                    compareMode = false;
-                    return;
-                }
-            } else {
-                dom = {
-                    viewerContainer: document.getElementById('viewerContainer'),
-                    leftContainer: document.getElementById('leftContainer'),
-                    rightContainer: document.getElementById('rightContainer'),
-                    leftViewerDiv: document.getElementById('leftViewer'),
-                    rightViewerDiv: document.getElementById('rightViewer'),
-                    slider: document.getElementById('compareSlider')
-                };
-            }
-
-            const { viewerContainer, leftContainer, rightContainer, bothViewerDiv, leftViewerDiv, rightViewerDiv, slider } = dom || {};
-
-            if (compareMode) {
-                if (btn) { btn.classList.add('active'); btn.setAttribute('aria-pressed', 'true'); }
-                if (slider) { slider.style.display = 'block'; slider.classList.add('active'); }
-                // make overlay container visible and accept pointer events
-                if (viewerContainer) { viewerContainer.style.display = 'block'; viewerContainer.style.pointerEvents = 'auto'; }
-
-                // Create viewers if needed
-                if (!leftViewer) {
-                    if (leftViewerDiv) { leftViewerDiv.style.width = '100%'; leftViewerDiv.style.height = '100%'; }
-                    leftViewer = new Cesium.Viewer(leftViewerDiv, {
-                        terrainProvider: Cesium.CesiumTerrainProvider(),
-                        baseLayerPicker: false, geocoder: false, homeButton: false,
-                        sceneModePicker: false, navigationHelpButton: false,
-                        animation: false, timeline: false, fullscreenButton: false
-                    });
-                    leftViewer.camera.moveEnd.addEventListener(() => syncCamera(leftViewer, [rightViewer, viewer]));
-                    // Copy base imagery layers from main viewer to left overlay in same order
-                    try { syncImageryLayers(viewer, leftViewer); } catch (e) { console.warn('Failed to sync imagery to leftViewer', e); }
-                }
-
-                if (!rightViewer) {
-                    if (rightViewerDiv) { rightViewerDiv.style.width = '100%'; rightViewerDiv.style.height = '100%'; }
-                    rightViewer = new Cesium.Viewer(rightViewerDiv, {
-                        terrainProvider: Cesium.CesiumTerrainProvider(),
-                        baseLayerPicker: false, geocoder: false, homeButton: false,
-                        sceneModePicker: false, navigationHelpButton: false,
-                        animation: false, timeline: false, fullscreenButton: false
-                    });
-                    rightViewer.camera.moveEnd.addEventListener(() => syncCamera(rightViewer, [leftViewer, viewer]));
-                    // Copy base imagery layers from main viewer to right overlay in same order
-                    try { syncImageryLayers(viewer, rightViewer); } catch (e) { console.warn('Failed to sync imagery to rightViewer', e); }
-                }
-
-                // Create bothViewer (full-screen, un-clipped) for datasets assigned to 'both'
-                if (!bothViewer) {
-                    if (bothViewerDiv) { bothViewerDiv.style.width = '100%'; bothViewerDiv.style.height = '100%'; }
-                    bothViewer = new Cesium.Viewer(bothViewerDiv, {
-                        terrainProvider: Cesium.CesiumTerrainProvider(),
-                        baseLayerPicker: false, geocoder: false, homeButton: false,
-                        sceneModePicker: false, navigationHelpButton: false,
-                        animation: false, timeline: false, fullscreenButton: false
-                    });
-                    bothViewer.camera.moveEnd.addEventListener(() => syncCamera(bothViewer, [leftViewer, rightViewer, viewer]));
-                    // Copy base imagery layers from main viewer to bothViewer as well
-                    try { syncImageryLayers(viewer, bothViewer); } catch (e) { console.warn('Failed to sync imagery to bothViewer', e); }
-                }
-
-                // Sync initial camera position
-                const pos = viewer.camera.position.clone();
-                const dir = viewer.camera.direction.clone();
-                const up = viewer.camera.up.clone();
-                leftViewer.camera.setView({ destination: pos, orientation: { direction: dir, up: up } });
-                rightViewer.camera.setView({ destination: pos, orientation: { direction: dir, up: up } });
-                if (bothViewer) bothViewer.camera.setView({ destination: pos, orientation: { direction: dir, up: up } });
-
-                // Initialize clip-paths for overlay reveal and pointer behavior
-                if (leftContainer) leftContainer.style.clipPath = `inset(0 50% 0 0)`;
-                if (rightContainer) rightContainer.style.clipPath = `inset(0 0 0 50%)`;
-                // Enable pointer events on the top overlay side; underlying right overlay remains non-interactive
-                if (leftContainer) leftContainer.style.pointerEvents = 'auto';
-                if (rightContainer) rightContainer.style.pointerEvents = 'none';
-                // Keep main container visible behind overlays
-                if (mainContainer) mainContainer.style.display = 'block';
-
-                // Auto-assign first two datasets
-                // Default behavior: assign all visible datasets to BOTH (left + right)
-                const visibleDatasets = datasets.filter(d => d.visible && d.dataSource);
-                leftDatasets.clear();
-                rightDatasets.clear();
-                visibleDatasets.forEach(d => { leftDatasets.add(d.id); rightDatasets.add(d.id); });
-
-                // Ensure slider is centered at 50% and clipPaths match
-                const sliderEl = document.getElementById('compareSlider');
-                const leftContainerEl = document.getElementById('leftContainer');
-                const rightContainerEl = document.getElementById('rightContainer');
-                if (sliderEl) sliderEl.style.left = '50%';
-                if (leftContainerEl) leftContainerEl.style.clipPath = `inset(0 50% 0 0)`;
-                if (rightContainerEl) rightContainerEl.style.clipPath = `inset(0 0 0 50%)`;
-
-                updateCompareModeDataSources();
-
-                // Initialize slider handlers now that DOM exists
-                if (!compareSliderInitialized) {
-                    initCompareSlider();
-                    compareSliderInitialized = true;
-                }
-            } else {
-                if (btn) { btn.classList.remove('active'); btn.setAttribute('aria-pressed', 'false'); }
-                if (slider) { slider.style.display = 'none'; slider.classList.remove('active'); }
-                // hide overlay container and make non-interactive so main viewer receives input
-                if (viewerContainer) { viewerContainer.style.display = 'none'; viewerContainer.style.pointerEvents = 'none'; }
-                if (leftContainer) leftContainer.style.pointerEvents = 'none';
-                if (rightContainer) rightContainer.style.pointerEvents = 'none';
-
-                // Move datasources back to main viewer
-                datasets.forEach(dataset => {
-                    if (dataset.dataSource && dataset.visible) {
-                        // remove from overlay viewers if present
-                        try { if (leftViewer && leftViewer.dataSources.contains(dataset.dataSource)) leftViewer.dataSources.remove(dataset.dataSource, false); } catch (e) {}
-                        try { if (rightViewer && rightViewer.dataSources.contains(dataset.dataSource)) rightViewer.dataSources.remove(dataset.dataSource, false); } catch (e) {}
-                        try { if (bothViewer && bothViewer.dataSources.contains(dataset.dataSource)) bothViewer.dataSources.remove(dataset.dataSource, false); } catch (e) {}
-                        if (!viewer.dataSources.contains(dataset.dataSource)) viewer.dataSources.add(dataset.dataSource);
-                        dataset.dataSource.show = true;
-                    }
-                    // Also remove any clones
-                    if (dataset._leftClone) { try { leftViewer?.dataSources.remove(dataset._leftClone, false); } catch (e) {} dataset._leftClone = null; }
-                    if (dataset._rightClone) { try { rightViewer?.dataSources.remove(dataset._rightClone, false); } catch (e) {} dataset._rightClone = null; }
-                });
-                // Destroy bothViewer if present
-                try { if (bothViewer) { bothViewer.destroy(); bothViewer = null; } } catch (e) { console.warn('Error destroying bothViewer:', e); }
-
-                leftDatasets.clear();
-                rightDatasets.clear();
-            }
-    
-            renderDatasetList();
-        }
-
-        function setDatasetSide(datasetId, side) {
-                    // Normalize to the canonical id used in `datasets` (handles string vs number)
-                    const ds = datasets.find(d => String(d.id) === String(datasetId));
-                    const id = ds ? ds.id : datasetId;
-                    if (side === 'left') {
-                        leftDatasets.add(id);
-                        rightDatasets.delete(id);
-                    } else if (side === 'right') {
-                        rightDatasets.add(id);
-                        leftDatasets.delete(id);
-                    } else if (side === 'both') {
-                        leftDatasets.add(id);
-                        rightDatasets.add(id);
-                    }
-
-            // Reconcile datasources between main viewer and overlay viewers
-            updateCompareModeDataSources();
-            renderDatasetList();
-        }
-
-        // Create a shallow clone of a DataSource suitable for display in a second viewer.
-        // This supports points, polylines and polygons with basic color/size properties.
-        function cloneDataSource(original, cloneSuffix) {
-            if (!original) return null;
-            try {
-                const now = Cesium.JulianDate.now();
-                const clone = new Cesium.CustomDataSource((original.name || 'DataSource') + (cloneSuffix ? ' ' + cloneSuffix : ' (clone)'));
-
-                original.entities.values.forEach(e => {
-                    const ent = { name: e.name };
-                    // Position
-                    if (e.position) {
-                        try {
-                            const pos = e.position.getValue(now);
-                            if (pos) ent.position = pos;
-                        } catch (err) { /* skip position */ }
-                    }
-                    // Point
-                    if (e.point) {
-                        ent.point = {};
-                        try {
-                            const color = e.point.color?.getValue(now);
-                            if (color) ent.point.color = new Cesium.ConstantProperty(color.clone());
-                        } catch (err) { }
-                        try {
-                            const px = e.point.pixelSize?.getValue(now);
-                            if (px !== undefined) ent.point.pixelSize = new Cesium.ConstantProperty(px);
-                        } catch (err) { }
-                    }
-                    // Polyline
-                    if (e.polyline) {
-                        ent.polyline = {};
-                        try {
-                            const positions = e.polyline.positions?.getValue(now);
-                            if (positions) ent.polyline.positions = new Cesium.ConstantProperty(positions.slice());
-                        } catch (err) { }
-                        try {
-                            const width = e.polyline.width?.getValue(now);
-                            if (width !== undefined) ent.polyline.width = new Cesium.ConstantProperty(width);
-                        } catch (err) { }
-                        try {
-                            const matColor = e.polyline.material?.color?.getValue(now);
-                            if (matColor) ent.polyline.material = new Cesium.ColorMaterialProperty(matColor.clone());
-                        } catch (err) { }
-                    }
-                    // Polygon
-                    if (e.polygon) {
-                        ent.polygon = {};
-                        try {
-                            const hierarchy = e.polygon.hierarchy?.getValue(now);
-                            const positions = hierarchy?.positions || hierarchy;
-                            if (positions) ent.polygon.hierarchy = new Cesium.ConstantProperty(new Cesium.PolygonHierarchy(positions.slice()));
-                        } catch (err) { }
-                        try {
-                            const matColor = e.polygon.material?.color?.getValue(now);
-                            if (matColor) ent.polygon.material = new Cesium.ColorMaterialProperty(matColor.clone());
-                        } catch (err) { }
-                        try {
-                            const outline = e.polygon.outline?.getValue ? e.polygon.outline.getValue(now) : e.polygon.outline;
-                            if (outline !== undefined) ent.polygon.outline = outline;
-                        } catch (err) { }
-                    }
-
-                    // Add entity to clone (ignore entities that failed)
-                    try { clone.entities.add(ent); } catch (err) { /* skip */ }
-                });
-
-                return clone;
-            } catch (e) {
-                console.warn('Failed to clone DataSource:', e);
-                return null;
-            }
-        }
-
-        function updateCompareModeDataSources() {
-            // If compare is not active, keep clones hidden and ensure originals are visible in main viewer
-            if (!compareMode) {
-                datasets.forEach(dataset => {
-                    if (dataset._leftClone) {
-                        try { dataset._leftClone.show = false; } catch (e) {}
-                    }
-                    if (dataset._rightClone) {
-                        try { dataset._rightClone.show = false; } catch (e) {}
-                    }
-                    if (dataset.dataSource) {
-                        try { if (!viewer.dataSources.contains(dataset.dataSource)) viewer.dataSources.add(dataset.dataSource); } catch (e) {}
-                        dataset.dataSource.show = !!dataset.visible;
-                    }
-                });
-                viewer.scene.requestRender();
-                return;
-            }
-
-            if (!leftViewer || !rightViewer) return;
-
-            // Reconcile visibility without removing/adding repeatedly — create clones once and toggle .show
-            datasets.forEach(dataset => {
-                const id = dataset.id;
-                const wantLeft = leftDatasets.has(id);
-                const wantRight = rightDatasets.has(id);
-
-                // If dataset has no datasource, nothing to do
-                if (!dataset.dataSource) return;
-
-                // Hide original in main viewer if overlays will show it
-                if ((wantLeft || wantRight) && dataset.dataSource) {
-                    try { dataset.dataSource.show = false; } catch (e) {}
-                }
-
-                // Handle BOTH: ensure clones exist and are shown/hidden appropriately
-                const wantBoth = wantLeft && wantRight;
-                if (wantBoth) {
-                    // create clones if missing and add to overlay viewers
-                    if (!dataset._leftClone) {
-                        dataset._leftClone = cloneDataSource(dataset.dataSource, '(L)');
-                        try { if (dataset._leftClone && leftViewer && !leftViewer.dataSources.contains(dataset._leftClone)) leftViewer.dataSources.add(dataset._leftClone); } catch (e) { console.warn('Failed to add left clone', e); }
-                    } else {
-                        try { if (leftViewer && !leftViewer.dataSources.contains(dataset._leftClone)) leftViewer.dataSources.add(dataset._leftClone); } catch (e) {}
-                    }
-                    if (!dataset._rightClone) {
-                        dataset._rightClone = cloneDataSource(dataset.dataSource, '(R)');
-                        try { if (dataset._rightClone && rightViewer && !rightViewer.dataSources.contains(dataset._rightClone)) rightViewer.dataSources.add(dataset._rightClone); } catch (e) { console.warn('Failed to add right clone', e); }
-                    } else {
-                        try { if (rightViewer && !rightViewer.dataSources.contains(dataset._rightClone)) rightViewer.dataSources.add(dataset._rightClone); } catch (e) {}
-                    }
-
-                    if (dataset._leftClone) dataset._leftClone.show = !!dataset.visible;
-                    if (dataset._rightClone) dataset._rightClone.show = !!dataset.visible;
-                } else {
-                    // Left-only
-                    if (wantLeft) {
-                        if (!dataset._leftClone) {
-                            dataset._leftClone = cloneDataSource(dataset.dataSource, '(L)');
-                            try { if (dataset._leftClone && leftViewer && !leftViewer.dataSources.contains(dataset._leftClone)) leftViewer.dataSources.add(dataset._leftClone); } catch (e) { console.warn('Failed to add left clone', e); }
-                        } else {
-                            try { if (leftViewer && !leftViewer.dataSources.contains(dataset._leftClone)) leftViewer.dataSources.add(dataset._leftClone); } catch (e) {}
-                        }
-                        if (dataset._leftClone) dataset._leftClone.show = !!dataset.visible;
-                    } else {
-                        if (dataset._leftClone) dataset._leftClone.show = false;
-                    }
-
-                    // Right-only
-                    if (wantRight) {
-                        if (!dataset._rightClone) {
-                            dataset._rightClone = cloneDataSource(dataset.dataSource, '(R)');
-                            try { if (dataset._rightClone && rightViewer && !rightViewer.dataSources.contains(dataset._rightClone)) rightViewer.dataSources.add(dataset._rightClone); } catch (e) { console.warn('Failed to add right clone', e); }
-                        } else {
-                            try { if (rightViewer && !rightViewer.dataSources.contains(dataset._rightClone)) rightViewer.dataSources.add(dataset._rightClone); } catch (e) {}
-                        }
-                        if (dataset._rightClone) dataset._rightClone.show = !!dataset.visible;
-                    } else {
-                        if (dataset._rightClone) dataset._rightClone.show = false;
-                    }
-                }
-
-                // If not wanted in overlays, show original in main viewer
-                if (!wantLeft && !wantRight) {
-                    try { if (dataset.dataSource && !viewer.dataSources.contains(dataset.dataSource)) viewer.dataSources.add(dataset.dataSource); } catch (e) {}
-                    if (dataset.dataSource) dataset.dataSource.show = !!dataset.visible;
-                }
-            });
-
-            viewer.scene.requestRender();
-            // Ensure overlay viewer stacking order matches datasets array
-            try { syncOverlayDataSourceOrder(leftViewer); } catch (e) {}
-            try { syncOverlayDataSourceOrder(rightViewer); } catch (e) {}
-        }
-
-        // Slider functionality
-        function initCompareSlider() {
-                    // Ensure DOM exists
-                    ensureCompareDOM();
-                    const slider = document.getElementById('compareSlider');
-                    const handle = document.getElementById('compareHandle');
-                    const leftContainer = document.getElementById('leftContainer');
-                    const rightContainer = document.getElementById('rightContainer');
-                    if (!slider || !handle || !leftContainer || !rightContainer) return;
-    
-            let isDragging = false;
-    
-            handle.addEventListener('mousedown', (e) => {
-                isDragging = true;
-                e.preventDefault();
-            });
-            // Touch support
-            handle.addEventListener('touchstart', (e) => { isDragging = true; e.preventDefault(); });
-    
-            function moveHandler(clientX) {
-                if (!compareMode) return;
-                const container = document.getElementById('viewerContainer');
-                if (!container) return;
-                const rect = container.getBoundingClientRect();
-                const x = clientX - rect.left;
-                const position = Math.max(0, Math.min(1, x / rect.width));
-                slider.style.left = `${position * 100}%`;
-                leftContainer.style.clipPath = `inset(0 ${(1 - position) * 100}% 0 0)`;
-                rightContainer.style.clipPath = `inset(0 0 0 ${position * 100}%)`;
-                // Toggle pointerEvents so underlying viewers receive input appropriately
-                leftContainer.style.pointerEvents = 'auto';
-                rightContainer.style.pointerEvents = 'none';
-            }
-
-            document.addEventListener('mousemove', (e) => {
-                if (!isDragging) return;
-                moveHandler(e.clientX);
-            });
-            document.addEventListener('touchmove', (e) => {
-                if (!isDragging || !e.touches || e.touches.length === 0) return;
-                moveHandler(e.touches[0].clientX);
-            }, { passive: false });
-    
-            document.addEventListener('mouseup', () => { isDragging = false; });
-            document.addEventListener('touchend', () => { isDragging = false; });
-        }
-
-        // Slider initialization is performed lazily when compare mode is enabled
-        // to avoid creating overlay DOM that may interfere with the main viewer.
-
-        window.toggleCompareMode = toggleCompareMode;
-        window.setDatasetSide = setDatasetSide;
+        // All compare mode functions removed - now fully handled by compare.js module
         
+
+// Expose safe wrapper functions to global scope for onclick handlers
+window.toggleDatasetSafe = async function(id, source, checked) {
+    try {
+        await toggleDataset(id, source, checked);
+    } catch (error) {
+        console.error('toggleDatasetSafe error:', error);
+        alert('Failed to toggle dataset: ' + error.message);
+    }
+};
+
+window.deleteDatasetSafe = async function(id, source) {
+    try {
+        if (confirm('Are you sure you want to delete this dataset?')) {
+            console.log(`Deleting dataset: id=${id}, source=${source}`);
+            await deleteDataset(id, source);
+            console.log(`Dataset ${id} deleted successfully`);
+        } else {
+            console.log('Delete cancelled by user');
+        }
+    } catch (error) {
+        console.error('deleteDatasetSafe error:', error);
+        alert('Failed to delete dataset: ' + error.message);
+    }
+};
 
 window.addEventListener('error', function(evt) {
     try {

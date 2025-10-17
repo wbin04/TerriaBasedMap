@@ -226,6 +226,13 @@ app.delete('/api/datasets/:id', (req, res) => {
   }
 
   datasets.splice(index, 1);
+  
+  // Reset counter to 0 if all datasets deleted
+  if (datasets.length === 0) {
+    console.log('All datasets deleted - resetting ID counter to 0');
+    datasetIdCounter = 0;
+  }
+  
   res.json({ success: true });
 });
 
