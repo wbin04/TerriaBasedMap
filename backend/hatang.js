@@ -284,5 +284,5 @@
     window.backendHatang.toggleHatangVisibility = toggleHatangVisibility;
     window.backendHatang.clearHatangData = clearHatangData;
 
-    console.log('✓ Hatang module loaded');
+    // console.log('✓ Hatang module loaded');
 })();

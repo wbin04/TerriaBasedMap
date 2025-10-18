@@ -282,5 +282,5 @@
     window.backendTree.getTreeStats = getTreeStats;
     window.backendTree.districts = districts;
     
-    console.log('Tree module loaded');
+    // console.log('Tree module loaded');
 })();
